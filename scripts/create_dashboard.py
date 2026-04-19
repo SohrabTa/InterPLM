@@ -14,12 +14,13 @@ from typing import Optional, List
 from interplm.dashboard.dashboard_cache import DashboardCache
 from interplm.dashboard.protein_metadata import UniProtMetadata
 from interplm.sae.dictionary import ReLUSAE
+from interplm.data_processing.embedding_loader import detect_and_create_loader
 
 
 def create_dashboard(
     sae_path: Path,
     embeddings_dir: Path,
-    layer: int,
+    layer: str,
     metadata_path: Path = Path("data/uniprotkb/swissprot_dense_annot_1k_subset.tsv.gz"),
     dashboard_name: str = "walkthrough",
     model_name: str = "esm",
@@ -73,7 +74,9 @@ def create_dashboard(
 
     # Check paths exist
     if not sae_path.exists():
-        raise FileNotFoundError(f"SAE model not found at {sae_path}. Train an SAE first (e.g., with train_basic_sae.py)!")
+        raise FileNotFoundError(
+            f"SAE model not found at {sae_path}. Train an SAE first (e.g., with train_basic_sae.py)!"
+        )
     if not embeddings_dir.exists():
         raise FileNotFoundError(f"Embeddings not found at {embeddings_dir}")
     if not metadata_path.exists():
@@ -85,7 +88,7 @@ def create_dashboard(
         metadata_path=metadata_path,
         uniprot_id_col=uniprot_id_col,
         protein_name_col=protein_name_col,
-        sequence_col=sequence_col
+        sequence_col=sequence_col,
     )
 
     # Create dashboard cache
@@ -95,18 +98,17 @@ def create_dashboard(
         model_name=model_name,
         model_type=model_type,
         protein_metadata=protein_metadata,
-        overwrite=True  # Overwrite if exists
+        overwrite=True,  # Overwrite if exists
     )
 
     # Handle shard range
     if shard_range is None:
-        # Use all shards available in the embeddings directory
-        shards_to_search = []
-        for shard_file in sorted(embeddings_dir.glob("shard_*.pt")):
-            shard_num = int(shard_file.stem.split("_")[1])
-            shards_to_search.append(shard_num)
-        if not shards_to_search:
-            print("\nWarning: No shard files found in embeddings directory")
+        try:
+            loader = detect_and_create_loader(embeddings_dir)
+            shards_to_search = loader.get_available_shard_indices()
+            print(f"Detected {len(shards_to_search)} shards in embeddings directory")
+        except ValueError as e:
+            print(f"\nWarning: {e}")
             shards_to_search = [0]
     else:
         shards_to_search = list(range(shard_range[0], shard_range[1] + 1))
@@ -115,7 +117,9 @@ def create_dashboard(
     if concept_enrichment_path is not None:
         concept_enrichment_path = Path(concept_enrichment_path)
         if not concept_enrichment_path.exists():
-            print(f"\nWarning: Specified concept enrichment path not found: {concept_enrichment_path}")
+            print(
+                f"\nWarning: Specified concept enrichment path not found: {concept_enrichment_path}"
+            )
             concept_enrichment_path = None
     else:
         concept_enrichment_path = None
@@ -130,7 +134,7 @@ def create_dashboard(
         aa_embeds_dir=embeddings_dir,  # For random feature sampling
         shards_to_search=shards_to_search,
         concept_enrichment_path=concept_enrichment_path,  # Optional concept analysis
-        overwrite=True
+        overwrite=True,
     )
 
     print()
@@ -145,4 +149,5 @@ def create_dashboard(
 
 if __name__ == "__main__":
     from tap import tapify
+
     tapify(create_dashboard)
