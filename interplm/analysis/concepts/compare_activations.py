@@ -368,7 +368,22 @@ def analyze_concepts(
     ]
 
     # Load and process labels for the specified shard
-    per_token_labels = sparse.load_npz(eval_set_metadata["path_to_shards"][str(shard)])
+    shard_path = Path(eval_set_metadata["path_to_shards"][str(shard)])
+    
+    # If the path doesn't exist, it likely contains an absolute path from a 
+    # different environment. Try resolving it as a sibling to the eval_set_dir
+    # (e.g., eval_set_dir is '.../valid' or '.../test', shard is in '.../shard_x')
+    if not shard_path.exists():
+        # Extact the shard folder name (e.g., 'shard_0') and filename from the stored path
+        stored_path_parts = Path(eval_set_metadata["path_to_shards"][str(shard)]).parts
+        if len(stored_path_parts) >= 2:
+            shard_folder = stored_path_parts[-2]
+            shard_filename = stored_path_parts[-1]
+            sibling_path = eval_set_dir.parent / shard_folder / shard_filename
+            if sibling_path.exists():
+                shard_path = sibling_path
+
+    per_token_labels = sparse.load_npz(shard_path)
     per_token_labels = per_token_labels[
         :, eval_set_metadata["indices_of_concepts_to_keep"]
     ]

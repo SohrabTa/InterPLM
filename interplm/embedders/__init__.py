@@ -3,6 +3,7 @@
 from typing import Type
 from interplm.embedders.base import BaseEmbedder
 from interplm.embedders.esm import ESM
+from interplm.embedders.prott5 import ProtT5CrosscoderEmbedder
 
 
 def get_embedder(embedder_type: str, **kwargs) -> BaseEmbedder:
@@ -21,6 +22,7 @@ def get_embedder(embedder_type: str, **kwargs) -> BaseEmbedder:
     embedder_types = {
         'esm': ESM,
         'esm2': ESM,  # Alias
+        'prott5': ProtT5CrosscoderEmbedder,
     }
     
     embedder_type_lower = embedder_type.lower()
