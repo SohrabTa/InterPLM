@@ -11,6 +11,7 @@ from interplm.analysis.activation_sampling import (
     get_random_sample_of_sae_feats,
 )
 from interplm.sae.dictionary import Dictionary
+from interplm.sae.inference import load_sae
 from interplm.dashboard.protein_metadata import UniProtMetadata
 from interplm.data_processing.embedding_loader import load_shard_embeddings
 
@@ -106,9 +107,9 @@ class DashboardCache:
         layer_data["aa_embeds_dir"] = layer_info["aa_embeds_dir"]
         layer_data["aa_metadata_dir"] = layer_info["aa_metadata_dir"]
 
-        # Load SAE on the correct device to avoid device mismatch
+        # Load SAE on the correct device using load_sae (handles Crosscoders and standard SAEs)
         device = get_device()
-        sae = ae_cls.from_pretrained(layer_dir / "SAE.pt", device=device)
+        sae = load_sae(layer_dir, model_name="SAE.pt", device=device)
         layer_data["SAE"] = sae
 
         optional_files = {
@@ -221,10 +222,13 @@ class DashboardCache:
             )
 
         # shutil.copy(sae_path, layer_dir / "SAE.pt")
+        # Copy configuration alongside SAE (needed for load_sae)
+        if (sae_path.parent / "config.yaml").exists():
+            shutil.copy(sae_path.parent / "config.yaml", layer_dir / "config.yaml")
 
-        # Load feature statistics
+        # Load feature statistics using load_sae (handles both standard SAEs and Crosscoders)
         device = get_device()
-        sae = sae_cls.from_pretrained(sae_path, device=device)
+        sae = load_sae(sae_path.parent, model_name=sae_path.name, device=device)
 
         # Load pre-computed feature statistics (required)
         precomputed_stats = feature_stats_dir / "Per_feature_statistics.yaml"

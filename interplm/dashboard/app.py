@@ -761,8 +761,9 @@ class ProteinFeatureVisualizer:
         is_custom_seq: bool = False,
     ):
         """Render visualizations for selected proteins"""
-        # Extract layer number from layer name (e.g., "layer_3" -> 3)
-        layer_num = int(layer.split('_')[1])
+        # Extract layer number from layer name (e.g., "layer_3" -> 3, "layer_crosscoder" -> -1)
+        layer_str = str(layer).split('_')[1] if '_' in str(layer) else str(layer)
+        layer_num = -1 if layer_str == "crosscoder" else int(layer_str)
 
         for idx, (_, protein) in enumerate(proteins.iterrows()):
             try:

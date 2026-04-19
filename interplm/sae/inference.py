@@ -4,16 +4,14 @@ import warnings
 from pathlib import Path
 from typing import List, Optional, Union
 
-import h5py
-import numpy as np
-import pandas as pd
 import torch
 from huggingface_hub import hf_hub_download
 from torch import Tensor
-from tqdm import tqdm
 import shutil
+import numpy as np
+from tqdm import tqdm
 
-from interplm.sae.dictionary import ReLUSAE, Dictionary
+from interplm.sae.dictionary import Dictionary
 from interplm.train.configs import TrainingRunConfig
 from interplm.utils import get_device
 
@@ -49,12 +47,50 @@ def load_sae(
         device = get_device()
     model_dir = Path(model_dir)
 
-    # Load state dict to the target device
-    state_dict = torch.load(
-        model_dir / model_name, map_location=torch.device(device), weights_only=True
-    )
+    config_path = model_dir / "config.yaml"
+    import yaml
 
-    config = TrainingRunConfig.from_yaml(model_dir / "config.yaml")
+    with open(config_path, "r") as f:
+        config_data = yaml.unsafe_load(f)
+
+    # Check for Crosscoder (flat config with n_hookpoints)
+    if "n_hookpoints" in config_data:
+        import sys
+
+        # Assuming crosscode is a sibling of InterPLM
+        interplm_root = Path(__file__).parents[2]
+        crosscode_path = interplm_root.parent / "crosscode"
+        if str(crosscode_path.absolute()) not in sys.path:
+            sys.path.append(str(crosscode_path.absolute()))
+
+        # Directly scaffold the crosscoder to handle InterPLM-style filenames (ae.pt, config.yaml)
+        # as crosscode's internal load() is rigid about model.pt/model_cfg.yaml
+        try:
+            from crosscode.models.acausal_crosscoder import ModelHookpointAcausalCrosscoder
+            from crosscode.interplm_adapter.crosscoder_dictionary import CrosscoderDictionaryWrapper
+            
+            # Scaffolding using the config data we already loaded
+            autoencoder = ModelHookpointAcausalCrosscoder._scaffold_from_cfg(config_data)
+            wrapper = CrosscoderDictionaryWrapper(autoencoder)
+            
+            # Load weights from ae.pt or ae_normalized.pt
+            state_dict = torch.load(model_dir / model_name, map_location=device, weights_only=True)
+            
+            if any(k.startswith('crosscoder.') for k in state_dict.keys()):
+                wrapper.load_state_dict(state_dict, strict=False)
+            else:
+                autoencoder.load_state_dict(state_dict, strict=False)
+                
+            wrapper.to(device)
+            wrapper.eval()
+            
+            # Return wrapped for InterPLM
+            return wrapper
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to scaffold Crosscoder from {model_dir}: {e}")
+
+    config = TrainingRunConfig.from_yaml(config_path)
     ae_cls = config.trainer_cfg.trainer_cls().dictionary_cls()
 
     # Initialize and configure the model
@@ -191,7 +227,7 @@ def get_sae_feats_in_batches(
     all_features = []
 
     # Process in chunks with progress bar
-    for i in range(0, len(aa_embds), chunk_size):
+    for i in tqdm(range(0, len(aa_embds), chunk_size), desc="Encoding features"):
         chunk = aa_embds[i : i + chunk_size]
         features = sae.encode_feat_subset(
             chunk, feat_list, normalize_features=normalize_features
