@@ -174,12 +174,12 @@ def shard_protein_data(
     n_shards: int,
 ) -> None:
     """Split preprocessed data into shards for parallel processing."""
-    # Split df into n_shards of roughly equal size
+    # Split indices into n_shards of roughly equal size
     np.random.seed(42)
-    shards = np.array_split(df, n_shards)
-    for shard_id, df_shard in enumerate(shards):
+    indices = np.array_split(np.arange(len(df)), n_shards)
+    for shard_id, idx in enumerate(indices):
         print(f"Processing shard {shard_id} of {n_shards}")
-        df_shard = df_shard.reset_index(drop=True)
+        df_shard = df.iloc[idx].reset_index(drop=True)
 
         shard_dir = output_dir / f"shard_{shard_id}"
         shard_dir.mkdir(parents=True, exist_ok=True)
