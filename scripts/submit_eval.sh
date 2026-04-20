@@ -6,7 +6,7 @@
 #SBATCH -e logs/eval_%j.err
 
 # Define Paths
-CODE_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
+INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
 CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
