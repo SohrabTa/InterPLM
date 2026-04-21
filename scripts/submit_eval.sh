@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
-#SBATCH -t 4:00:00
+#SBATCH -t 10:00:00
 #SBATCH -o logs/eval_%j.out
 #SBATCH -e logs/eval_%j.err
 
@@ -21,6 +21,7 @@ export PYTHONPATH="/workspace/InterPLM"
 mkdir -p logs
 
 echo "Starting InterPLM evaluation pipeline on $(hostname) at $(date)"
+START_TIME=$(date +%s)
 
 # Use Python 3.12 to satisfy crosscode requirements
 srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
