@@ -58,33 +58,47 @@ def get_single_chain_pdb_structure(pdb_id: str, chain_id: str):
     return structure
 
 
-def get_single_chain_afdb_structure(uniprot_id: str):
-    # Ensure the PDB_DIR exists
+def _get_afdb_pdb_path(uniprot_id: str) -> str | None:
+    """Helper to get the local path to an AFDB PDB file, downloading it if necessary using the API."""
+    import glob
     os.makedirs(PDB_DIR, exist_ok=True)
-
-    # Define the file path for this specific PDB
-    pdb_file_path = os.path.join(PDB_DIR, f"AF-{uniprot_id}-F1-model_v4.pdb")
-
-    # Check if the file already exists
-    if not os.path.exists(pdb_file_path):
-        # If it doesn't exist, download it
-        afdb_path = f"https://alphafold.ebi.ac.uk/files/AF-{uniprot_id}-F1-model_v4.pdb"
-
-        # Download the structure using requests
-        try:
-            response = requests.get(afdb_path)
-            response.raise_for_status()  # This will not raise an exception now
-
-            # Save the structure to the PDB_DIR
-            with open(pdb_file_path, "w") as pdb_file:
-                pdb_file.write(response.text)
-        except requests.RequestException:
-            # If there's any error in the request, return None
+    
+    # Check if we already have it
+    existing_files = glob.glob(os.path.join(PDB_DIR, f"AF-{uniprot_id}-F1-model_v*.pdb"))
+    if existing_files:
+        return sorted(existing_files)[-1]
+        
+    # Need to download, get latest URL from API
+    api_url = f"https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
+    try:
+        api_response = requests.get(api_url)
+        api_response.raise_for_status()
+        data = api_response.json()
+        if not data:
             return None
+            
+        pdb_url = data[0].get("pdbUrl")
+        if not pdb_url:
+            return None
+            
+        filename = pdb_url.split("/")[-1]
+        pdb_file_path = os.path.join(PDB_DIR, filename)
+        
+        pdb_response = requests.get(pdb_url)
+        pdb_response.raise_for_status()
+        
+        with open(pdb_file_path, "w") as f:
+            f.write(pdb_response.text)
+            
+        return pdb_file_path
+    except Exception as e:
+        print(f"Error downloading PDB for {uniprot_id}: {e}")
+        return None
 
-        # Save the structure to the PDB_DIR
-        with open(pdb_file_path, "w") as pdb_file:
-            pdb_file.write(response.text)
+def get_single_chain_afdb_structure(uniprot_id: str):
+    pdb_file_path = _get_afdb_pdb_path(uniprot_id)
+    if not pdb_file_path:
+        return None
 
     # Parse the structure from the file
     parser = PDBParser()
@@ -129,30 +143,11 @@ def get_structure_from_cif_file(cif_file_path: str, chain_id: str | None = None)
 
 
 def get_pdb_info_as_string_from_afdb(uniprot_id: str):
-    # Define the file path for this specific PDB
-    pdb_file_path = os.path.join(PDB_DIR, f"AF-{uniprot_id}-F1-model_v4.pdb")
+    pdb_file_path = _get_afdb_pdb_path(uniprot_id)
+    if not pdb_file_path:
+        return None
 
-    # Check if the file already exists
-    if not os.path.exists(pdb_file_path):
-        # If it doesn't exist, download it
-        afdb_path = f"https://alphafold.ebi.ac.uk/files/AF-{uniprot_id}-F1-model_v4.pdb"
-
-        # Download the structure using requests
-        try:
-            response = requests.get(afdb_path)
-            response.raise_for_status()  # This will not raise an exception now
-
-            # Save the structure to the PDB_DIR
-            with open(pdb_file_path, "w") as pdb_file:
-                pdb_file.write(response.text)
-        except requests.RequestException:
-            # If there's any error in the request, return None
-            print("Error downloading PDB file")
-            return None
-
-        pdb_text = response.text.split("\n")
-    else:
-        pdb_text = open(pdb_file_path, "r").readlines()
+    pdb_text = open(pdb_file_path, "r").readlines()
     residue_info = {}
     for line in pdb_text:
         res = parse_pdb_line(line)
