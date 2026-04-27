@@ -775,7 +775,10 @@ class ProteinFeatureVisualizer:
                     layer=layer_num
                 )
                 # Convert to tensor for SAE
-                embeddings = torch.from_numpy(embeddings_np).to(self.device)
+                if isinstance(embeddings_np, torch.Tensor):
+                    embeddings = embeddings_np.to(self.device)
+                else:
+                    embeddings = torch.from_numpy(embeddings_np).to(self.device)
                 features = (
                     dash_data["SAE"]
                     .encode_feat_subset(
