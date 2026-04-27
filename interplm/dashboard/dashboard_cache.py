@@ -47,6 +47,26 @@ class DashboardCache:
         self.model_name = cache_level_metadata["model_name"]
         self.model_type = cache_level_metadata["model_type"]
         self.protein_metadata = cache_level_metadata["protein_metadata"]
+        
+        # Fix absolute paths from HPC (e.g. /workspace/...) when loading locally
+        if hasattr(self.protein_metadata, '_metadata_path'):
+            original_path = Path(self.protein_metadata._metadata_path)
+            if not original_path.exists():
+                dataset_name = original_path.parent.name
+                file_name = original_path.name
+                
+                # Find the root 'data' directory by walking up from cache_dir
+                data_dir = next((p for p in self.cache_dir.parents if p.name == 'data'), None)
+                
+                if data_dir:
+                    eval_path = data_dir / "eval_dataset" / dataset_name / file_name
+                    
+                    if eval_path.exists():
+                        self.protein_metadata._metadata_path = eval_path
+                    else:
+                        self.protein_metadata._metadata_path = self.cache_dir.parent.parent / file_name
+                else:
+                    self.protein_metadata._metadata_path = self.cache_dir.parent.parent / file_name
 
         self.layers = self._list_layers()
 
