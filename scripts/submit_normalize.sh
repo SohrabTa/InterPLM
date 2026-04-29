@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
-#SBATCH -t 1:00:00
+#SBATCH -t 1:15:00
 #SBATCH -o logs/normalize_%j.out
 #SBATCH -e logs/normalize_%j.err
 
@@ -34,7 +34,7 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e . && \
      uv run interplm/sae/normalize.py \
      --sae_dir /workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_2026-03-12_06-03-41/crashed_epoch_0_step_2519836 \
-     --aa_embds_dir /workspace/data/uniprotkb_modern_score5_35k/analysis_embeddings/prott5/layer_crosscoder"
+     --aa_embds_dir /workspace/data/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder"
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
