@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
-#SBATCH -t 10:00:00
+#SBATCH -t 16:00:00
 #SBATCH -o logs/eval_%j.out
 #SBATCH -e logs/eval_%j.err
 
@@ -34,9 +34,9 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e . && \
      uv run scripts/run_eval_pipeline.py \
      --sae_dir /workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_2026-03-12_06-03-41/crashed_epoch_0_step_2519836 \
-     --aa_embds_dir /workspace/data/uniprotkb_modern_score5_35k/analysis_embeddings/prott5/layer_crosscoder \
-     --eval_data_root /workspace/data/uniprotkb_modern_score5_35k/processed_annotations \
-     --output_root /workspace/InterPLM/results/crosscoder_eval/uniprotkb_modern_score5_35k"
+     --aa_embds_dir /workspace/data/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
+     --eval_data_root /workspace/data/uniprotkb_modern_score45_67k/processed_annotations \
+     --output_root /workspace/InterPLM/results/crosscoder_eval/uniprotkb_modern_score45_67k"
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
