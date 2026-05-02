@@ -490,6 +490,72 @@ class ProteinFeatureVisualizer:
                 else:
                     st.write("No concepts found for this feature.")
 
+        # If the SAE is a Crosscoder, plot the cross-layer representation norms
+        sae = dash_data.get("SAE")
+        if sae is not None and hasattr(sae, "crosscoder"):
+            self._plot_crosscoder_layer_norms(sae, feature_id)
+
+    def _plot_crosscoder_layer_norms(self, sae, feature_id: int):
+        import plotly.express as px
+        import traceback
+        
+        st.subheader(
+            f"**Cross-Layer Representation for f/{feature_id}**",
+            help="Displays the feature's decoder weight norm across model layers. Peak layer indicates where the feature is most strongly represented in the unscaled residual stream.",
+        )
+        
+        try:
+            crosscoder_model = sae.crosscoder
+            
+            # Get the decoder weights for this feature
+            # Shape: [n_latents, n_models, n_hookpoints, d_model] -> [24, 1024]
+            w_dec_for_feature = crosscoder_model.W_dec_LMPD[feature_id, 0, :, :].clone()
+            
+            # Robust check for is_folded (handles both bool and 0-d tensor)
+            is_folded = crosscoder_model.is_folded
+            if isinstance(is_folded, torch.Tensor):
+                is_folded = is_folded.item()
+                
+            if is_folded:
+                scaling_factors = crosscoder_model.folded_scaling_factors_out_Xo[0, :]
+                w_dec_for_feature = w_dec_for_feature * scaling_factors.unsqueeze(1)
+                
+            layer_norms = torch.norm(w_dec_for_feature, p=2, dim=1).detach().cpu().numpy()
+            layers = list(range(1, len(layer_norms) + 1))
+            
+            df = pd.DataFrame({
+                "Layer": layers,
+                "Normalized Decoder Norm": layer_norms
+            })
+            
+            fig = px.line(
+                df, 
+                x="Layer", 
+                y="Normalized Decoder Norm", 
+                markers=True,
+                title="",
+            )
+            
+            fig.update_layout(
+                xaxis_title="Layer",
+                yaxis_title="Normalized Decoder Weight Norm",
+                xaxis=dict(tickmode="linear", dtick=1)
+            )
+            
+            peak_layer = int(layer_norms.argmax()) + 1
+            fig.add_vline(
+                x=peak_layer, 
+                line_dash="dash", 
+                line_color="rgba(255,0,0,0.5)",
+                annotation_text=f"Peak: Layer {peak_layer}"
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"Error plotting cross-layer norms: {str(e)}")
+            st.code(traceback.format_exc(), language="text")
+
     def _display_top_features_per_concept(self, dash_data: Dict):
         """Display a table showing the top feature for each concept across all features."""
         st.subheader("🧬 Top Features per Concept")
