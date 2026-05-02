@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
-#SBATCH -t 16:00:00
+#SBATCH -t 28:00:00
 #SBATCH -o logs/eval_%j.out
 #SBATCH -e logs/eval_%j.err
 
