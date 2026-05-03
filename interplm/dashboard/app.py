@@ -435,7 +435,7 @@ class ProteinFeatureVisualizer:
                         concepts_for_feat = concepts_for_feat.drop_duplicates("concept", keep="first")
 
                         # Format for display
-                        display_df = concepts_for_feat[["concept", "f1_per_domain", "precision", "recall", "threshold_pct"]].copy()
+                        display_df = concepts_for_feat[["concept", "f1_per_domain", "precision", "recall_per_domain", "threshold_pct"]].copy()
                         display_df.columns = ["Concept", "F1", "Precision", "Recall", "Threshold %"]
                         display_df.set_index("Concept", inplace=True)
                         st.write(display_df)
@@ -820,27 +820,53 @@ class ProteinFeatureVisualizer:
         """Display SwissProt concepts table"""
         if "Sig_concepts_per_feature" not in dash_data:
             return
-        concepts = (
-            dash_data["Sig_concepts_per_feature"]
+            
+        all_concepts = dash_data["Sig_concepts_per_feature"]
+        
+        # Original logic to filter all valid candidates
+        valid_candidates = (
+            all_concepts
             .query("tp_per_domain >= 2 or tp >= 2")
             .sort_values(["f1_per_domain", "recall_per_domain", "tp"], ascending=False)
-            .drop_duplicates(["concept"], keep="first")
         )
+
+        # Get the top feature per concept
+        concepts = valid_candidates.drop_duplicates(["concept"], keep="first").copy()
+        
+        # Map concept -> list of all valid candidate features (sorted by F1)
+        candidate_mapping = valid_candidates.groupby("concept")["feature"].apply(list).to_dict()
+        
+        def get_other_features(row):
+            c_name = row["concept"]
+            top_f = row["feature"]
+            if c_name in candidate_mapping:
+                # Keep order from valid_candidates (which is sorted by F1 descending)
+                others = [int(f) for f in candidate_mapping[c_name] if f != top_f]
+                if others:
+                    others_str = [f"f/{f}" for f in others]
+                    return ", ".join(others_str)
+            return ""
+
+        if not concepts.empty:
+            concepts["other_candidates"] = concepts.apply(get_other_features, axis=1)
+        else:
+            concepts["other_candidates"] = ""
 
         # Extract layer number from layer name (e.g., "layer_4" -> "4")
         layer_num = layer.split('_')[1] if '_' in str(layer) else str(layer)
 
         st.subheader(
             f"**Concepts Identified in Layer {layer_num}**",
-            help="Concepts are defined based on Swiss-Prot annotations. For each concept identified in the SAE features, we list one example feature that activates on this concept. Details on concept-feature pairing is described in the InterPLM paper.",
+            help="Concepts are defined based on Swiss-Prot annotations. For each concept identified in the SAE features, we list the best matching feature. Other candidate features matching the concept are also shown.",
         )
         display_cols = {
             "concept": "Concept",
-            "feature": "Feature",
+            "feature": "Top Feature",
             "f1_per_domain": "F1",
             "precision": "Precision",
             "recall_per_domain": "Recall",
             "tp": "True Positives (per AA)",
+            "other_candidates": "Other Candidates"
         }
 
         st.dataframe(
