@@ -497,6 +497,7 @@ class ProteinFeatureVisualizer:
 
     def _plot_crosscoder_layer_norms(self, sae, feature_id: int):
         import plotly.express as px
+        import torch.nn.functional as F
         import traceback
         
         st.subheader(
@@ -520,33 +521,58 @@ class ProteinFeatureVisualizer:
                 scaling_factors = crosscoder_model.folded_scaling_factors_out_Xo[0, :]
                 w_dec_for_feature = w_dec_for_feature * scaling_factors.unsqueeze(1)
                 
-            layer_norms = torch.norm(w_dec_for_feature, p=2, dim=1).detach().cpu().numpy()
-            layers = list(range(1, len(layer_norms) + 1))
+            layer_norms = torch.norm(w_dec_for_feature, p=2, dim=1)
+            layer_norms_np = layer_norms.detach().cpu().numpy()
+            
+            # Normalize layer norms to max 1 for plotting alongside cosine similarity
+            max_norm = layer_norms_np.max()
+            layer_norms_normalized = layer_norms_np / max_norm if max_norm > 0 else layer_norms_np
+            
+            layers = list(range(1, len(layer_norms_np) + 1))
+            
+            peak_idx = int(layer_norms_np.argmax())
+            peak_layer = peak_idx + 1
+            peak_vec = w_dec_for_feature[peak_idx, :].unsqueeze(0)
+            
+            # Compute cosine similarity of each layer's decoder vector to the peak layer's vector
+            cos_sims = F.cosine_similarity(w_dec_for_feature, peak_vec, dim=1).detach().cpu().numpy()
             
             df = pd.DataFrame({
                 "Layer": layers,
-                "Normalized Decoder Norm": layer_norms
+                "Normalized Decoder Norm": layer_norms_normalized,
+                "Cosine Similarity of Decoder to Peak": cos_sims
             })
             
+            df_melted = df.melt(
+                id_vars=["Layer"], 
+                value_vars=["Normalized Decoder Norm", "Cosine Similarity of Decoder to Peak"],
+                var_name="Metric", 
+                value_name="Value"
+            )
+            
             fig = px.line(
-                df, 
+                df_melted, 
                 x="Layer", 
-                y="Normalized Decoder Norm", 
+                y="Value", 
+                color="Metric",
+                color_discrete_map={
+                    "Normalized Decoder Norm": "darkblue",
+                    "Cosine Similarity of Decoder to Peak": "#ff7f0e"
+                },
                 markers=True,
                 title="",
             )
             
             fig.update_layout(
                 xaxis_title="Layer",
-                yaxis_title="Normalized Decoder Weight Norm",
+                yaxis_title="Value",
                 xaxis=dict(tickmode="linear", dtick=1, range=[0.5, len(layers) + 0.5])
             )
             
-            peak_layer = int(layer_norms.argmax()) + 1
             fig.add_vline(
                 x=peak_layer, 
                 line_dash="dash", 
-                line_color="rgba(255,0,0,0.5)",
+                line_color="rgba(0,0,139,0.5)",
                 annotation_text=f"Peak: Layer {peak_layer}"
             )
             
