@@ -505,6 +505,8 @@ class ProteinFeatureVisualizer:
             help="Displays the feature's decoder weight norm across model layers. Peak layer indicates where the feature is most strongly represented in the unscaled residual stream.",
         )
         
+        show_cos_sim = st.checkbox("Show Cosine Similarity to Peak Layer", value=False)
+        
         try:
             crosscoder_model = sae.crosscoder
             
@@ -537,15 +539,22 @@ class ProteinFeatureVisualizer:
             # Compute cosine similarity of each layer's decoder vector to the peak layer's vector
             cos_sims = F.cosine_similarity(w_dec_for_feature, peak_vec, dim=1).detach().cpu().numpy()
             
-            df = pd.DataFrame({
+            data_dict = {
                 "Layer": layers,
                 "Normalized Decoder Norm": layer_norms_normalized,
-                "Cosine Similarity of Decoder to Peak": cos_sims
-            })
+            }
+            if show_cos_sim:
+                data_dict["Cosine Similarity of Decoder to Peak"] = cos_sims
+                
+            df = pd.DataFrame(data_dict)
             
+            value_vars = ["Normalized Decoder Norm"]
+            if show_cos_sim:
+                value_vars.append("Cosine Similarity of Decoder to Peak")
+                
             df_melted = df.melt(
                 id_vars=["Layer"], 
-                value_vars=["Normalized Decoder Norm", "Cosine Similarity of Decoder to Peak"],
+                value_vars=value_vars,
                 var_name="Metric", 
                 value_name="Value"
             )
@@ -556,8 +565,8 @@ class ProteinFeatureVisualizer:
                 y="Value", 
                 color="Metric",
                 color_discrete_map={
-                    "Normalized Decoder Norm": "darkblue",
-                    "Cosine Similarity of Decoder to Peak": "#ff7f0e"
+                    "Normalized Decoder Norm": "#00DDFF",
+                    "Cosine Similarity of Decoder to Peak": "#cc39ca"
                 },
                 markers=True,
                 title="",
@@ -572,7 +581,7 @@ class ProteinFeatureVisualizer:
             fig.add_vline(
                 x=peak_layer, 
                 line_dash="dash", 
-                line_color="rgba(0,0,139,0.5)",
+                line_color="rgba(0,221,255,0.5)",
                 annotation_text=f"Peak: Layer {peak_layer}"
             )
             
