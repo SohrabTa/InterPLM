@@ -539,7 +539,7 @@ class ProteinFeatureVisualizer:
             fig.update_layout(
                 xaxis_title="Layer",
                 yaxis_title="Normalized Decoder Weight Norm",
-                xaxis=dict(tickmode="linear", dtick=1)
+                xaxis=dict(tickmode="linear", dtick=1, range=[0.5, len(layers) + 0.5])
             )
             
             peak_layer = int(layer_norms.argmax()) + 1
