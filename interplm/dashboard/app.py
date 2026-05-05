@@ -427,21 +427,21 @@ class ProteinFeatureVisualizer:
                     ].copy()
 
                     if not concepts_for_feat.empty:
-                        # Filter by F1 threshold
-                        concepts_for_feat = concepts_for_feat[concepts_for_feat["f1_per_domain"] > 0.5]
+                        # Use the same 'valid candidate' logic as the global table (tp >= 2)
+                        concepts_for_feat = concepts_for_feat.query("tp_per_domain >= 2 or tp >= 2")
 
                         # Keep only best threshold per concept (highest F1)
                         concepts_for_feat = concepts_for_feat.sort_values("f1_per_domain", ascending=False)
                         concepts_for_feat = concepts_for_feat.drop_duplicates("concept", keep="first")
 
                         # Format for display
-                        display_df = concepts_for_feat[["concept", "f1_per_domain", "precision", "recall_per_domain", "threshold_pct"]].copy()
-                        display_df.columns = ["Concept", "F1", "Precision", "Recall", "Threshold %"]
+                        display_df = concepts_for_feat[["concept", "f1_per_domain", "precision", "recall", "tp", "threshold_pct"]].copy()
+                        display_df.columns = ["Concept", "F1", "Precision", "Recall", "True Positives (per AA)", "Threshold %"]
                         display_df.set_index("Concept", inplace=True)
                         st.write(display_df)
 
                         if len(concepts_for_feat) == 0:
-                            st.write("No concepts found with F1 > 0.5 for this feature.")
+                            st.write("No concepts found with >= 2 True Positives for this feature.")
                     else:
                         st.write("No concepts found for this feature.")
                 elif (
