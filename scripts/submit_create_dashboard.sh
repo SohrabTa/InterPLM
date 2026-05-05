@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
-#SBATCH -t 01:00:00
+#SBATCH -t 02:00:00
 #SBATCH -o logs/dashboard_%j.out
 #SBATCH -e logs/dashboard_%j.err
 
@@ -36,14 +36,14 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e . && \
      uv run scripts/create_dashboard.py \
      --sae_path /workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_2026-03-12_06-03-41/crashed_epoch_0_step_2519836/ae.pt \
-     --embeddings_dir /workspace/data/uniprotkb_modern_score5_35k/analysis_embeddings/prott5/layer_crosscoder \
-     --metadata_path /workspace/data/uniprotkb_modern_score5_35k/proteins.tsv.gz \
-     --concept_enrichment_path /workspace/InterPLM/results/crosscoder_eval/uniprotkb_modern_score5_35k/test_counts/heldout_all_top_pairings.csv \
+     --embeddings_dir /workspace/data/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
+     --metadata_path /workspace/data/uniprotkb_modern_score45_67k/proteins.tsv.gz \
+     --concept_enrichment_path /workspace/InterPLM/results/crosscoder_eval/uniprotkb_modern_score45_67k/test_counts/heldout_all_top_pairings.csv \
      --layer crosscoder \
      --dashboard_name prott5_crosscoder \
      --model_name prott5 \
      --model_type Rostlab/prot_t5_xl_uniref50 \
-     --shard_range 0 41"
+     --shard_range 0 83"
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
