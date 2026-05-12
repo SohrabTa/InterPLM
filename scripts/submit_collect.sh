@@ -33,7 +33,7 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e /workspace/crosscode && \
      uv pip install -e . && \
      uv run scripts/collect_feature_activations.py \
-     --sae_dir /workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_2026-03-12_06-03-41/crashed_epoch_0_step_2519836 \
+     --sae_dir /workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_2026-05-09_11-50-43/final_epoch_0_step_2519836 \
      --embeddings_dir /workspace/data/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
      --metadata_dir /workspace/data/uniprotkb_modern_score45_67k/processed_annotations \
      --shard_range 0 83"
