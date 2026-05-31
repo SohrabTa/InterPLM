@@ -83,8 +83,6 @@ def get_uniprot_by_sequence(sequence: str):
         return None, f"Exception: {str(e)}"
 
 
-st.set_page_config(layout="wide", page_title="Crosscoder Inference", page_icon="🧬")
-
 # Constants
 CROSSCODER_PATH = "/Users/sohrab.tawana/private/crosscoder/model_checkpoints/crosscoder_l8192_k32_bs512_full_2026-03-12_06-03-41/crashed_epoch_0_step_2519836"
 CONCEPT_CSV_PATH = "/Users/sohrab.tawana/private/crosscoder/data/crosscoder_eval/uniprotkb_modern_score45_67k/test_counts/heldout_all_top_pairings.csv"
@@ -96,7 +94,7 @@ def load_models():
     embedder = ProtT5CrosscoderEmbedder(device=device)
 
     # Load SAE and wrap using the inference utils
-    sae = load_sae(CROSSCODER_PATH, model_name="ae.pt", device=device)
+    sae = load_sae(CROSSCODER_PATH, model_name="ae_normalized.pt", device=device)
 
     return embedder, sae
 
@@ -107,7 +105,7 @@ def load_concept_data():
     return df.copy()
 
 
-def main():
+def run_inference_page():
     # Load custom CSS if available (optional)
     css_paths = [
         Path(__file__).parent / ".streamlit" / "style.css",
@@ -158,7 +156,7 @@ def main():
             embeddings = embedder.extract_embeddings(sequences, batch_size=4)
 
             # 2. Get SAE features
-            features = sae.encode(embeddings)  # shape: [total_tokens, n_latents]
+            features = sae.encode(embeddings, normalize_features=True)  # shape: [total_tokens, n_latents]
 
             # Move to CPU for analysis
             features = features.detach().cpu().numpy()
@@ -331,6 +329,11 @@ def main():
                             st.info(
                                 f"No matching UniProt entry found for this sequence. ({error_or_name})"
                             )
+
+
+def main():
+    st.set_page_config(layout="wide", page_title="Crosscoder Inference", page_icon="🧬")
+    run_inference_page()
 
 
 if __name__ == "__main__":

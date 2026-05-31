@@ -408,8 +408,14 @@ class ProteinFeatureVisualizer:
                 f"**Feature Activation Distribution for f/{feature_id}**",
                 help=help_notes["act_distribution"],
             )
+            # Get rescale factor for dynamic normalization of cache activations
+            rescale_factor = None
+            sae = dash_data.get("SAE")
+            if sae is not None and hasattr(sae, "activation_rescale_factor"):
+                rescale_factor = sae.activation_rescale_factor[feature_id].item()
+
             plot_of_feat_acts = plot_activations_for_single_feat(
-                dash_data["SAE_features"], feature_id
+                dash_data["SAE_features"], feature_id, rescale_factor=rescale_factor
             )
             if plot_of_feat_acts is not None:
                 st.plotly_chart(
@@ -1004,6 +1010,19 @@ class ProteinFeatureVisualizer:
         st.components.v1.html(structure_html, height=300)
 
 
+def run_visualization(cache_dir: str):
+    st.title("InterPLM Feature Visualization")
+
+    visualizer = ProteinFeatureVisualizer(cache_dir=Path(cache_dir))
+    state = visualizer.setup_sidebar()
+
+    visualizer.display_feature_statistics(state.layer, state.feature_id)
+
+    # Show proteins by default, or when button is clicked
+    if state.show_proteins or True:  # Always show unless explicitly disabled
+        visualizer.visualize_proteins(state)
+
+
 def main(cache_dir: str):
     st.set_page_config(
         layout="wide",
@@ -1027,16 +1046,17 @@ def main(cache_dir: str):
     if not css_loaded:
         print(f"✗ CSS not found. Tried: {[str(p) for p in css_paths]}")
 
-    st.title("InterPLM Feature Visualization")
+    from interplm.dashboard.inference_app import run_inference_page
 
-    visualizer = ProteinFeatureVisualizer(cache_dir=Path(cache_dir))
-    state = visualizer.setup_sidebar()
+    def run_visualization_page():
+        run_visualization(cache_dir)
 
-    visualizer.display_feature_statistics(state.layer, state.feature_id)
-
-    # Show proteins by default, or when button is clicked
-    if state.show_proteins or True:  # Always show unless explicitly disabled
-        visualizer.visualize_proteins(state)
+    pages = [
+        st.Page(run_visualization_page, title="Feature Visualization", icon="🧬"),
+        st.Page(run_inference_page, title="Crosscoder Inference", icon="🔮"),
+    ]
+    pg = st.navigation(pages)
+    pg.run()
 
 
 if __name__ == "__main__":

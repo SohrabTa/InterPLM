@@ -87,12 +87,14 @@ def visualize_protein_feature(
     return fig
 
 
-def plot_activations_for_single_feat(feat_acts, feature_to_show):
+def plot_activations_for_single_feat(feat_acts, feature_to_show, rescale_factor=None):
     if feature_to_show not in feat_acts:
         return None
     acts_for_feat = feat_acts[feature_to_show]
     if len(acts_for_feat) == 0:
         return None
+    if rescale_factor is not None and rescale_factor > 1e-12:
+        acts_for_feat = [val / rescale_factor for val in acts_for_feat]
     fig = px.histogram(
         x=acts_for_feat,
         nbins=100,
