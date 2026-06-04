@@ -11,6 +11,12 @@ CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
 
+# --- re-run override (defaults = original baseline run) ---
+#   RERUN_SAE_DIR : checkpoint dir (the script reads ${SAE_DIR}/ae.pt)
+#   RERUN_PAIRINGS: the heldout_all_top_pairings.csv produced by submit_eval.sh
+SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_2026-05-09_11-50-43/final_epoch_0_step_2519836}"
+PAIRINGS="${RERUN_PAIRINGS:-/workspace/InterPLM/results/crosscoder_eval/baseline/uniprotkb_modern_score45_67k/test_counts/heldout_all_top_pairings.csv}"
+
 # Mounts: Host:Container
 MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${DATA_DIR}:/workspace/data,${CKPT_DIR}:/workspace/model_checkpoints,${CROSSCODE_DIR}:/workspace/crosscode"
 
@@ -35,10 +41,10 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e /workspace/crosscode && \
      uv pip install -e . && \
      uv run scripts/create_dashboard.py \
-     --sae_path /workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_2026-05-09_11-50-43/final_epoch_0_step_2519836/ae.pt \
+     --sae_path ${SAE_DIR}/ae.pt \
      --embeddings_dir /workspace/data/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
      --metadata_path /workspace/data/uniprotkb_modern_score45_67k/proteins.tsv.gz \
-     --concept_enrichment_path /workspace/InterPLM/results/crosscoder_eval/baseline/uniprotkb_modern_score45_67k/test_counts/heldout_all_top_pairings.csv \
+     --concept_enrichment_path ${PAIRINGS} \
      --layer crosscoder \
      --dashboard_name prott5_crosscoder \
      --model_name prott5 \

@@ -11,6 +11,14 @@ CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
 
+# --- re-run override (defaults = original baseline run) ---
+#   RERUN_SAE_DIR    : checkpoint to evaluate
+#   RERUN_OUTPUT_ROOT: results dir. Use a path WITHOUT "/baseline/" for the full
+#                      model (it produces the headline pairings), WITH "/baseline/"
+#                      for the random-init control.
+SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_2026-05-09_11-50-43/final_epoch_0_step_2519836}"
+OUTPUT_ROOT="${RERUN_OUTPUT_ROOT:-/workspace/InterPLM/results/crosscoder_eval/baseline/uniprotkb_modern_score45_67k}"
+
 # Mounts: Host:Container
 MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${DATA_DIR}:/workspace/data,${CKPT_DIR}:/workspace/model_checkpoints,${CROSSCODE_DIR}:/workspace/crosscode"
 
@@ -33,10 +41,10 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e /workspace/crosscode && \
      uv pip install -e . && \
      uv run scripts/run_eval_pipeline.py \
-     --sae_dir /workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_2026-05-09_11-50-43/final_epoch_0_step_2519836 \
+     --sae_dir ${SAE_DIR} \
      --aa_embds_dir /workspace/data/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
      --eval_data_root /workspace/data/uniprotkb_modern_score45_67k/processed_annotations \
-     --output_root /workspace/InterPLM/results/crosscoder_eval/baseline/uniprotkb_modern_score45_67k"
+     --output_root ${OUTPUT_ROOT}"
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
