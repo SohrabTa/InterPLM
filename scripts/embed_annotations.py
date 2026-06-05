@@ -21,6 +21,8 @@ def embed_annotations(
     layer: int = 3,
     batch_size: int = 8,
     sequence_column: str = "sequence",
+    shard_start: int = 0,
+    shard_end: int = -1,
 ):
     """
     Extract PLM embeddings for proteins with annotations.
@@ -54,7 +56,15 @@ def embed_annotations(
     if not shard_files:
         raise FileNotFoundError(f"No protein data files found in {input_dir}")
 
-    print(f"Found {len(shard_files)} annotation files to process")
+    # Optional shard slicing for parallel job arrays: each task processes
+    # shard_files[shard_start:shard_end]. Output is per-shard (shard_N/embeddings.pt),
+    # so disjoint slices never collide.
+    total_shards = len(shard_files)
+    if shard_end is None or shard_end < 0:
+        shard_end = total_shards
+    shard_files = shard_files[shard_start:shard_end]
+    print(f"Found {total_shards} shards total; this task processes slice "
+          f"[{shard_start}:{shard_end}] = {len(shard_files)} shards")
 
     # Process each shard
     for shard_file in tqdm(shard_files, desc="Processing shards"):
