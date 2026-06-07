@@ -11,7 +11,7 @@ CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
 HF_HOME="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/hf_home"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
-SAE_DIR="/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/final_epoch_0_step_2519836"
+SAE_DIR="/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836"
 
 # Mounts: Host:Container
 MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${HF_HOME}:/workspace/hf_home,${CKPT_DIR}:/workspace/model_checkpoints,${CROSSCODE_DIR}:/workspace/crosscode,${DATA_DIR}:/workspace/data"
@@ -36,7 +36,7 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e . && \
      uv run interplm/sae/normalize.py \
      --sae_dir ${SAE_DIR} \
-     --aa_embds_dir "/workspace/data/eval_dataset/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder"
+     --aa_embds_dir /workspace/data/eval_dataset/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder"
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
