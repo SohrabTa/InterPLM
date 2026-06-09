@@ -1,7 +1,12 @@
 #!/bin/bash
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
-#SBATCH -t 12:00:00
+# Walltime: Phase A is a single scan of the 84 shards (same encode as normalize,
+# job 5671079 = 58 min wall incl. container build) plus a ~22 min per-protein
+# binning loop (measured, worst-case) — expected ~1.5 h, ~2.5 h conservative.
+# 4 h leaves headroom for I/O contention with a concurrent eval job and avoids a
+# timeout (which would waste the whole scan), while backfilling sooner than 12 h.
+#SBATCH -t 04:00:00
 #SBATCH -o logs/collect_step1_%j.out
 #SBATCH -e logs/collect_step1_%j.err
 
