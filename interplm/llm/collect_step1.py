@@ -100,6 +100,7 @@ def phase_a_bin_scan(
     feature_chunk_size: int,
     cache_path: Path,
     n_per_bin_to_sample: int = 30,
+    n_zero_to_sample: int = 500,
 ) -> dict[int, dict[tuple[float, float], list[str]]]:
     """Return {feature_id: {(lo, hi): [protein_ids]}}.
 
@@ -144,6 +145,9 @@ def phase_a_bin_scan(
         # bins, so the per-bin sample must exceed 10 (n_top only sizes the heaps,
         # not these bin lists). Defaults to 30.
         n_per_bin_to_sample=n_per_bin_to_sample,
+        # Zero bin gets a larger reservoir pool so Phase B can later draw close
+        # (k-mer-matched) negatives from a composition-representative set.
+        n_zero_to_sample=n_zero_to_sample,
         activation_threshold=0.0,
     )
     print(f"Phase A: scan took {time.time() - t0:.1f}s")
@@ -537,6 +541,15 @@ def main() -> int:
         "exceed 10 so Phase B can reach its 24-in-top-two recipe target).",
     )
     parser.add_argument(
+        "--n-zero",
+        type=int,
+        default=500,
+        help="Size of the zero-activation pool per feature (default 500), filled by "
+        "reservoir sampling across all shards so close (composition-matched) negatives "
+        "can be drawn from it later. Larger than --n-per-bin because it is a candidate "
+        "pool to match within, not a final selection.",
+    )
+    parser.add_argument(
         "--phase-a-only",
         action="store_true",
         help="Run only Phase A (bin scan + cache) and exit. Use to pre-produce the "
@@ -578,6 +591,7 @@ def main() -> int:
         feature_chunk_size=args.feature_chunk_size,
         cache_path=cache_dir / "bin_assignments.yaml",
         n_per_bin_to_sample=args.n_per_bin,
+        n_zero_to_sample=args.n_zero,
     )
 
     if args.phase_a_only:

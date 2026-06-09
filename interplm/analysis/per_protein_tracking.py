@@ -45,6 +45,7 @@ class PerProteinActivationTracker:
         ],
         activation_threshold: float = 0.0,
         n_per_bin_to_sample: int = 10,
+        n_zero_to_sample: int | None = None,
     ):
         """
         Args:
@@ -57,11 +58,21 @@ class PerProteinActivationTracker:
                 top-N max/pct heaps. Raise this when a downstream sampler needs more than
                 10 proteins in a single bin (e.g. the LLM-autointerp Phase B recipe, which
                 wants up to 24 across the top two bins).
+            n_zero_to_sample: Size of the zero-activation (0.0, 0.0) pool, if that bin
+                is configured. Defaults to n_per_bin_to_sample. The zero bucket is filled
+                by RESERVOIR sampling (uniform over all zero proteins across all shards),
+                not first-N, so a larger pool stays composition-representative of the whole
+                dataset — needed so a downstream k-mer matcher can pick close (composition-
+                matched) negatives. Only used when (0.0, 0.0) is in lower_quantile_thresholds.
         """
         self.num_features = num_features
         self.n_top = n_top
         self.activation_threshold = activation_threshold
         self.n_per_bin_to_sample = n_per_bin_to_sample
+        self.n_zero_to_sample = (
+            n_zero_to_sample if n_zero_to_sample is not None else n_per_bin_to_sample
+        )
+        self._track_zero = (0.0, 0.0) in lower_quantile_thresholds
 
         # Initialize min-heaps to track top activations
         # Each heap stores tuples of (activation_value, protein_id)
@@ -70,10 +81,28 @@ class PerProteinActivationTracker:
         # Track by activation percentage
         self.pct_heap = [[] for _ in range(num_features)]
 
-        # Initialize quantile tracking
+        # Quantile tracking via RESERVOIR sampling. Every bin (including the zero
+        # bucket) holds a uniform random sample of its proteins of size _bin_cap,
+        # drawn across ALL shards via Algorithm R. This (a) bounds memory — keeping
+        # every matching protein is infeasible at scale, since with TopK sparsity a
+        # feature has nonzero max on a large fraction of proteins, mostly landing in
+        # the low bins — and (b) is unbiased: a uniform sample, not the first-N-seen
+        # (which would only ever keep proteins from the first shards).
         self.lower_quantile_thresholds = lower_quantile_thresholds
-        self.lower_quantile_lists = [
-            {thresh: set() for thresh in lower_quantile_thresholds}
+        self._bin_cap = {
+            thresh: (
+                self.n_zero_to_sample
+                if thresh == (0.0, 0.0)
+                else self.n_per_bin_to_sample
+            )
+            for thresh in lower_quantile_thresholds
+        }
+        self.bin_reservoir = [
+            {thresh: [] for thresh in lower_quantile_thresholds}
+            for _ in range(num_features)
+        ]
+        self.bin_seen = [
+            {thresh: 0 for thresh in lower_quantile_thresholds}
             for _ in range(num_features)
         ]
 
@@ -83,6 +112,20 @@ class PerProteinActivationTracker:
         self.proteins_with_activation = np.zeros(num_features)
         self.total_activation_percentage = np.zeros(num_features)
         self.max_activation_per_feature = np.zeros(num_features)
+
+    def _reservoir_add(self, feature_id: int, bin_key: tuple, protein_id: str):
+        """Add protein_id to a bin's reservoir (Algorithm R: uniform sample of size
+        _bin_cap[bin_key] over the full stream of proteins that fall in this bin)."""
+        res = self.bin_reservoir[feature_id][bin_key]
+        seen = self.bin_seen[feature_id][bin_key]
+        cap = self._bin_cap[bin_key]
+        if len(res) < cap:
+            res.append(protein_id)
+        else:
+            j = np.random.randint(0, seen + 1)
+            if j < cap:
+                res[j] = protein_id
+        self.bin_seen[feature_id][bin_key] = seen + 1
 
     def update(
         self, feature_activations: np.ndarray, protein_id: str, feature_ids: List
@@ -148,24 +191,21 @@ class PerProteinActivationTracker:
                             self.pct_heap[feature_id], (pct_activation, protein_id)
                         )
 
-                # Assign to appropriate quantile range
-                for start_threshold, end_threshold in self.lower_quantile_lists[
-                    feature_id
-                ]:
+                # Assign to the matching quantile bin (reservoir-sampled).
+                for start_threshold, end_threshold in self.bin_reservoir[feature_id]:
                     if (
                         max_activation > start_threshold
                         and max_activation <= end_threshold
                     ):
-                        self.lower_quantile_lists[feature_id][
-                            (start_threshold, end_threshold)
-                        ].add(protein_id)
+                        self._reservoir_add(
+                            feature_id, (start_threshold, end_threshold), protein_id
+                        )
                         break
 
-            # Track proteins with zero activation (up to 1000 per feature)
-            elif (0.0, 0.0) in self.lower_quantile_lists[feature_id] and len(
-                self.lower_quantile_lists[feature_id][(0.0, 0.0)]
-            ) < 1_000:
-                self.lower_quantile_lists[feature_id][(0.0, 0.0)].add(protein_id)
+            # Zero-activation proteins go in the (0.0, 0.0) bucket (also reservoir-
+            # sampled), so the negative pool is a uniform cross-shard sample.
+            elif self._track_zero:
+                self._reservoir_add(feature_id, (0.0, 0.0), protein_id)
 
     def get_results(self) -> Dict[str, Dict[int, List[str]]]:
         """
@@ -186,25 +226,15 @@ class PerProteinActivationTracker:
             for i in range(self.num_features)
         }
 
-        # Process quantile results (randomly sample 10 proteins if more are present)
+        # Each bin is already a reservoir (uniform sample of size <= its cap, drawn
+        # across all shards). Emit it sorted for a canonical, reproducible order.
         lower_quantile_results = {
-            feat: {quantile: [] for quantile in self.lower_quantile_thresholds}
+            feat: {
+                quantile: sorted(self.bin_reservoir[feat][quantile])
+                for quantile in self.lower_quantile_thresholds
+            }
             for feat in range(self.num_features)
         }
-        for feat in range(self.num_features):
-            for quantile, quantile_res in self.lower_quantile_lists[feat].items():
-                n_res = len(quantile_res)
-                # Sort to a canonical order before sampling: quantile_res is a
-                # set of protein-id strings, so list() order varies per process
-                # under hash randomization, which would make the np.random.choice
-                # sample (and the output order) non-reproducible even with a fixed
-                # seed. Sorting makes the seeded sampling deterministic.
-                quantile_res = sorted(quantile_res)
-                if n_res > self.n_per_bin_to_sample:
-                    quantile_res = np.random.choice(
-                        quantile_res, self.n_per_bin_to_sample, replace=False
-                    )
-                lower_quantile_results[feat][quantile] = quantile_res
 
         # Sort and convert percentage activation heaps to lists
         pct_result = {
@@ -288,6 +318,7 @@ def find_max_examples_per_feat(
     ],
     activation_threshold: float = 0.05,  # Minimum activation to count as "activated"
     n_per_bin_to_sample: int = 10,  # Max proteins sampled per quantile bin in get_results
+    n_zero_to_sample: int | None = None,  # Zero-bin pool size (reservoir); defaults to n_per_bin_to_sample
 ):
     """
     Find proteins that maximally activate each feature in the sparse autoencoder.
@@ -329,6 +360,7 @@ def find_max_examples_per_feat(
         lower_quantile_thresholds=lower_quantile_thresholds,
         activation_threshold=activation_threshold,
         n_per_bin_to_sample=n_per_bin_to_sample,
+        n_zero_to_sample=n_zero_to_sample,
     )
 
     # Process each shard of data

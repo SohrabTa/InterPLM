@@ -48,6 +48,7 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      --shards-to-search all \
      --seed 42 \
      --n-per-bin 30 \
+     --n-zero 500 \
      --phase-a-only"
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
