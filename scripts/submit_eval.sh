@@ -8,22 +8,22 @@
 # Define Paths
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
 CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
-DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
-
-# --- re-run override (defaults = original baseline run) ---
-#   RERUN_SAE_DIR    : checkpoint to evaluate
-#   RERUN_OUTPUT_ROOT: results dir. Use a path WITHOUT "/baseline/" for the full
-#                      model (it produces the headline pairings), WITH "/baseline/"
-#                      for the random-init control.
-SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_2026-05-09_11-50-43/final_epoch_0_step_2519836}"
-OUTPUT_ROOT="${RERUN_OUTPUT_ROOT:-/workspace/InterPLM/results/crosscoder_eval/baseline/uniprotkb_modern_score45_67k}"
+HF_HOME="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/hf_home"
+DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 
 # Mounts: Host:Container
-MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${DATA_DIR}:/workspace/data,${CKPT_DIR}:/workspace/model_checkpoints,${CROSSCODE_DIR}:/workspace/crosscode"
+MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM"
+MOUNTS="${MOUNTS},${CROSSCODE_DIR}:/workspace/crosscode"
+MOUNTS="${MOUNTS},${CKPT_DIR}:/workspace/model_checkpoints"
+MOUNTS="${MOUNTS},${HF_HOME}:/workspace/hf_home"
+MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
+
+SAE_DIR="/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836"
+OUTPUT_ROOT="/workspace/data/crosscoder_eval/auxfix/uniprotkb_modern_score45_67k"
 
 # Env
-export HF_HOME="/workspace/data/hf_home"
+export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 
 mkdir -p logs
@@ -42,8 +42,8 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e . && \
      uv run scripts/run_eval_pipeline.py \
      --sae_dir ${SAE_DIR} \
-     --aa_embds_dir /workspace/data/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
-     --eval_data_root /workspace/data/uniprotkb_modern_score45_67k/processed_annotations \
+     --aa_embds_dir /workspace/data/eval_dataset/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
+     --eval_data_root /workspace/data/eval_dataset/uniprotkb_modern_score45_67k/processed_annotations \
      --output_root ${OUTPUT_ROOT}"
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
