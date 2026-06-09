@@ -44,6 +44,7 @@ class PerProteinActivationTracker:
             (0.8, 1.0),
         ],
         activation_threshold: float = 0.0,
+        n_per_bin_to_sample: int = 10,
     ):
         """
         Args:
@@ -51,10 +52,16 @@ class PerProteinActivationTracker:
             n_top: Number of top proteins to track per feature
             lower_quantile_thresholds: List of tuples defining activation quantile ranges
             activation_threshold: Minimum activation value to count as "activated" (default: 0.0)
+            n_per_bin_to_sample: Max proteins to randomly sample per quantile bin in
+                get_results (default: 10). Independent of n_top, which controls the
+                top-N max/pct heaps. Raise this when a downstream sampler needs more than
+                10 proteins in a single bin (e.g. the LLM-autointerp Phase B recipe, which
+                wants up to 24 across the top two bins).
         """
         self.num_features = num_features
         self.n_top = n_top
         self.activation_threshold = activation_threshold
+        self.n_per_bin_to_sample = n_per_bin_to_sample
 
         # Initialize min-heaps to track top activations
         # Each heap stores tuples of (activation_value, protein_id)
@@ -187,9 +194,16 @@ class PerProteinActivationTracker:
         for feat in range(self.num_features):
             for quantile, quantile_res in self.lower_quantile_lists[feat].items():
                 n_res = len(quantile_res)
-                quantile_res = list(quantile_res)
-                if n_res > 10:
-                    quantile_res = np.random.choice(quantile_res, 10, replace=False)
+                # Sort to a canonical order before sampling: quantile_res is a
+                # set of protein-id strings, so list() order varies per process
+                # under hash randomization, which would make the np.random.choice
+                # sample (and the output order) non-reproducible even with a fixed
+                # seed. Sorting makes the seeded sampling deterministic.
+                quantile_res = sorted(quantile_res)
+                if n_res > self.n_per_bin_to_sample:
+                    quantile_res = np.random.choice(
+                        quantile_res, self.n_per_bin_to_sample, replace=False
+                    )
                 lower_quantile_results[feat][quantile] = quantile_res
 
         # Sort and convert percentage activation heaps to lists
@@ -273,6 +287,7 @@ def find_max_examples_per_feat(
         (0.8, 1.0),
     ],
     activation_threshold: float = 0.05,  # Minimum activation to count as "activated"
+    n_per_bin_to_sample: int = 10,  # Max proteins sampled per quantile bin in get_results
 ):
     """
     Find proteins that maximally activate each feature in the sparse autoencoder.
@@ -313,6 +328,7 @@ def find_max_examples_per_feat(
         n_top=n_top_proteins_to_track,
         lower_quantile_thresholds=lower_quantile_thresholds,
         activation_threshold=activation_threshold,
+        n_per_bin_to_sample=n_per_bin_to_sample,
     )
 
     # Process each shard of data

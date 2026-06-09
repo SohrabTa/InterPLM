@@ -99,6 +99,7 @@ def phase_a_bin_scan(
     feature_ids: list[int],
     feature_chunk_size: int,
     cache_path: Path,
+    n_per_bin_to_sample: int = 30,
 ) -> dict[int, dict[tuple[float, float], list[str]]]:
     """Return {feature_id: {(lo, hi): [protein_ids]}}.
 
@@ -138,19 +139,23 @@ def phase_a_bin_scan(
         shards_to_search=shards_to_search,
         feature_chunk_size=feature_chunk_size,
         lower_quantile_thresholds=bin_thresholds,
-        # Keep the per-bin random-sample cap large enough to allow top-up
-        # from (0.8, 0.9] when (0.9, 1.0] is sparse.
         n_top_proteins_to_track=10,
+        # Per-bin output cap: Phase B's recipe wants up to 24 across the top two
+        # bins, so the per-bin sample must exceed 10 (n_top only sizes the heaps,
+        # not these bin lists). Defaults to 30.
+        n_per_bin_to_sample=n_per_bin_to_sample,
         activation_threshold=0.0,
     )
     print(f"Phase A: scan took {time.time() - t0:.1f}s")
 
-    # results["lower_quantile"]: {feat_idx_within_subset: {bin: [protein_ids]}}
-    # Re-key to the original feature IDs.
+    # find_max_examples_per_feat tracks ALL features by their ABSOLUTE index
+    # (_restrict_to_feature_subset is a no-op), so results["lower_quantile"] is
+    # keyed {absolute_feat_id: {bin: [protein_ids]}}. Index it by feat_id, not by
+    # position in feature_ids — otherwise feature live[i] gets feature i's bins.
     bin_assignments: dict[int, dict[tuple[float, float], list[str]]] = {}
-    for subset_idx, feat_id in enumerate(feature_ids):
+    for feat_id in feature_ids:
         bin_assignments[feat_id] = {
-            k: list(v) for k, v in results["lower_quantile"][subset_idx].items()
+            k: list(v) for k, v in results["lower_quantile"][feat_id].items()
         }
 
     # Cache (with tuple keys serialized as "lo,hi")
@@ -524,8 +529,27 @@ def main() -> int:
     parser.add_argument("--feature-chunk-size", type=int, default=256)
     parser.add_argument("--trace-threshold", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--n-per-bin",
+        type=int,
+        default=30,
+        help="Max proteins sampled per activation bin in Phase A (default 30; must "
+        "exceed 10 so Phase B can reach its 24-in-top-two recipe target).",
+    )
+    parser.add_argument(
+        "--phase-a-only",
+        action="store_true",
+        help="Run only Phase A (bin scan + cache) and exit. Use to pre-produce the "
+        "binning on a GPU/compute node; a later full run reuses the cache and runs "
+        "Phases B-E (Phase D needs internet, so run that where UniProt is reachable).",
+    )
     parser.add_argument("--skip-uniprot", action="store_true")
     args = parser.parse_args()
+
+    # Seed for reproducible per-bin sampling (PerProteinActivationTracker.get_results
+    # samples via the global np.random) and the Phase B train/eval split rng.
+    np.random.seed(args.seed)
+    print(f"Seeded np.random with seed={args.seed}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     cache_dir = args.output_dir / "cache"
@@ -553,7 +577,19 @@ def main() -> int:
         feature_ids=feature_ids,
         feature_chunk_size=args.feature_chunk_size,
         cache_path=cache_dir / "bin_assignments.yaml",
+        n_per_bin_to_sample=args.n_per_bin,
     )
+
+    if args.phase_a_only:
+        n_bins_populated = sum(
+            1 for bins in bin_assignments.values() for v in bins.values() if len(v) > 0
+        )
+        print(
+            f"--phase-a-only: wrote bin assignments for {len(bin_assignments)} features "
+            f"({n_bins_populated} non-empty (feature, bin) cells) to "
+            f"{cache_dir / 'bin_assignments.yaml'}. Stopping before Phase B."
+        )
+        return 0
 
     # Phase B: paper rule
     sampled = phase_b_apply_paper_rule(bin_assignments, seed=args.seed)
