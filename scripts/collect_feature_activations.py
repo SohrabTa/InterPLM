@@ -27,6 +27,7 @@ def collect_feature_activations(
     shards: Optional[List[int]] = None,
     shard_range: Optional[List[int]] = None,
     activation_threshold: float = 0.05,
+    checkpoint: str = "ae_normalized.pt",
 ):
     """
     Analyze SAE features and find max activating proteins.
@@ -39,6 +40,10 @@ def collect_feature_activations(
         shards: Shard indices to search (e.g., [0, 1, 2, 3]). Use shard_range instead for ranges.
         shard_range: Shard range [start, end] (inclusive) to search (e.g., [0, 7] for shards 0-7)
         activation_threshold: Minimum activation value to count as 'activated' (default: 0.05)
+        checkpoint: SAE checkpoint filename inside sae_dir. Defaults to ae_normalized.pt, the
+            eval/collect/dashboard convention (the JumpReLU-converted, normalized model), NOT the
+            raw ae.pt — collecting on the un-normalized model would put the dashboard's per-feature
+            activations on a different scale than the eval/binning.
     """
     # Handle shard arguments
     if shards is not None and shard_range is not None:
@@ -66,7 +71,7 @@ def collect_feature_activations(
     # Load SAE (auto-detects architecture from config)
     device = get_device()
     print(f"Loading SAE on device: {device}")
-    sae = load_sae(sae_dir, device=device)
+    sae = load_sae(sae_dir, device=device, model_name=checkpoint)
     print(f"SAE loaded: {sae.__class__.__name__} with {sae.dict_size} features, {sae.activation_dim}D embeddings")
     print()
 

@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -84,6 +86,22 @@ N_TOP_BIN = 10
 N_TOP_TWO_TARGET = 24
 N_ZERO_NEGATIVES = 10
 MIN_PROTEINS_IN_TOP_THREE = 20
+
+# A feature needs at least this many zero-activation negatives to be described.
+# Some features fire on (nearly) every protein, so their zero pool is empty and they
+# get 0 negatives — these are ubiquitous "positional / bias" features, not concepts,
+# and autointerp's detection-style scoring needs a mix of activating AND non-activating
+# examples (Bills et al. 2023; Paulo et al. 2025). Dropping them follows Ge et al. 2025,
+# who "filter out features that activate ubiquitously (such as positional or bias
+# features)." On the 2026-06-10 auxfix cache this drops exactly the 13 features (of 5603
+# describable) with an empty zero pool. Raise the gate to also trim thin-pool features.
+MIN_NEGATIVES = 1
+
+# Close-negative selection: the bins whose proteins define a feature's "positives"
+# for sequence-identity matching (the strongest activators). A zero-activation
+# protein that is highly identical to one of these is a HARD negative — the
+# feature cannot win by detecting residue composition / sequence identity alone.
+POSITIVE_REFERENCE_BINS: list[tuple[float, float]] = [(0.8, 0.9), (0.9, 1.0)]
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +202,156 @@ def _restrict_to_feature_subset(sae, feature_ids: list[int]):
 
 
 # ---------------------------------------------------------------------------
+# Close-negative selection (MMseqs2): pick zero-activation negatives that are the
+# most sequence-identity-similar to each feature's positives, instead of random
+# ones. This turns the negatives into hard negatives so the autointerp F1 can no
+# longer be earned by detecting amino-acid composition / sequence identity — only
+# by capturing what the feature actually responds to. See
+# pilot_autointerp.select_with_negatives for the earlier (dropped) k-mer-cosine
+# composition proxy; here we use actual alignment %identity.
+# ---------------------------------------------------------------------------
+
+
+def _is_describable(bins: dict[tuple[float, float], list[str]]) -> bool:
+    """Phase B's describability gate: >=MIN_PROTEINS_IN_TOP_THREE in the top
+    three bins. Only describable features get negatives computed."""
+    top_three = (
+        len(bins.get((0.7, 0.8), []))
+        + len(bins.get((0.8, 0.9), []))
+        + len(bins.get((0.9, 1.0), []))
+    )
+    return top_three >= MIN_PROTEINS_IN_TOP_THREE
+
+
+def load_sequences_from_tsv(tsv_path: Path, needed: set[str]) -> dict[str, str]:
+    """Build {entry: sequence} from a UniProt-style TSV (e.g. proteins.tsv) for
+    the entries we need. Used for close-negative selection, where the per-shard
+    metadata TSVs may not be present (the cache has only protein IDs)."""
+    df = pd.read_csv(tsv_path, sep="\t", usecols=["Entry", "Sequence"])
+    df = df[df["Entry"].isin(needed)]
+    return {str(e): str(s) for e, s in zip(df["Entry"], df["Sequence"])}
+
+
+def _write_fasta(path: Path, id2seq: dict[str, str]) -> int:
+    with path.open("w") as f:
+        for entry, seq in id2seq.items():
+            if seq:
+                f.write(f">{entry}\n{seq}\n")
+    return sum(1 for s in id2seq.values() if s)
+
+
+def compute_close_negative_identities(
+    bin_assignments: dict[int, dict[tuple[float, float], list[str]]],
+    sequences: dict[str, str],
+    workdir: Path,
+    mmseqs_bin: str = "mmseqs",
+    sensitivity: float = 7.5,
+    threads: int = 4,
+    seed: int = 42,
+) -> dict[int, dict[str, float]]:
+    """Return {feature_id: {zero_entry: max_pct_identity_to_that_feature's_positives}}.
+
+    One global `mmseqs easy-search`: query = every describable feature's positive
+    proteins (POSITIVE_REFERENCE_BINS = the two strongest-activation bins),
+    target = every pooled zero-activation protein. We then, per feature, take each
+    of its zero-pool proteins' MAX %identity over that feature's own positives.
+    Pairs MMseqs2 finds no alignment for are treated as identity 0 (truly
+    dissimilar negatives, ranked last). Deterministic given the same inputs.
+    """
+    if shutil.which(mmseqs_bin) is None:
+        raise RuntimeError(
+            f"mmseqs binary {mmseqs_bin!r} not found on PATH. Install MMseqs2 "
+            "(brew install mmseqs2 / conda) or pass --negatives random."
+        )
+
+    describable = {f: b for f, b in bin_assignments.items() if _is_describable(b)}
+    positives_by_feat = {
+        f: sorted(
+            {
+                p
+                for lo_hi in POSITIVE_REFERENCE_BINS
+                for p in b.get(lo_hi, [])
+                if p in sequences
+            }
+        )
+        for f, b in describable.items()
+    }
+    zeros_by_feat = {
+        f: sorted({z for z in b.get((0.0, 0.0), []) if z in sequences})
+        for f, b in describable.items()
+    }
+
+    unique_pos = sorted({p for ps in positives_by_feat.values() for p in ps})
+    unique_zero = sorted({z for zs in zeros_by_feat.values() for z in zs})
+    print(
+        f"Close-negatives: {len(describable)} describable features; "
+        f"{len(unique_pos)} unique positive query seqs, "
+        f"{len(unique_zero)} unique zero target seqs"
+    )
+    if not unique_pos or not unique_zero:
+        print("Close-negatives: empty query or target set; falling back to random.")
+        return {}
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    query_fa = workdir / "positives.fasta"
+    target_fa = workdir / "zeros.fasta"
+    result_m8 = workdir / "pos_vs_zero.m8"
+    tmp_dir = workdir / "mmseqs_tmp"
+    _write_fasta(query_fa, {e: sequences[e] for e in unique_pos})
+    _write_fasta(target_fa, {e: sequences[e] for e in unique_zero})
+
+    cmd = [
+        mmseqs_bin, "easy-search",
+        str(query_fa), str(target_fa), str(result_m8), str(tmp_dir),
+        "--format-output", "query,target,fident,alnlen,evalue,bits",
+        "-s", str(sensitivity),
+        "-e", "10000",            # permissive: we want most-identical-AVAILABLE, even weak hits
+        "--max-seqs", "5000",
+        "--threads", str(threads),
+        "--remove-tmp-files", "1",
+    ]
+    t0 = time.time()
+    print(f"Close-negatives: running {' '.join(cmd)}")
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(res.stdout[-2000:])
+        print(res.stderr[-2000:])
+        raise RuntimeError(f"mmseqs easy-search failed (exit {res.returncode})")
+    print(f"Close-negatives: mmseqs took {time.time() - t0:.1f}s")
+
+    # pair_ident[(positive, zero)] = best %identity (fident is a fraction in [0,1])
+    pair_ident: dict[tuple[str, str], float] = {}
+    n_rows = 0
+    if result_m8.exists():
+        with result_m8.open() as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 3:
+                    continue
+                q, t, fident = parts[0], parts[1], float(parts[2])
+                n_rows += 1
+                key = (q, t)
+                if fident > pair_ident.get(key, -1.0):
+                    pair_ident[key] = fident
+    print(f"Close-negatives: parsed {n_rows} alignment rows "
+          f"({len(pair_ident)} unique (positive, zero) pairs)")
+
+    identity_by_feat: dict[int, dict[str, float]] = {}
+    for f in describable:
+        pos = positives_by_feat[f]
+        feat_map: dict[str, float] = {}
+        for z in zeros_by_feat[f]:
+            best = 0.0
+            for p in pos:
+                v = pair_ident.get((p, z))
+                if v is not None and v > best:
+                    best = v
+            feat_map[z] = best
+        identity_by_feat[f] = feat_map
+    return identity_by_feat
+
+
+# ---------------------------------------------------------------------------
 # Phase B: apply paper sampling rule per feature
 # ---------------------------------------------------------------------------
 
@@ -191,15 +359,29 @@ def _restrict_to_feature_subset(sae, feature_ids: list[int]):
 def phase_b_apply_paper_rule(
     bin_assignments: dict[int, dict[tuple[float, float], list[str]]],
     seed: int,
+    negatives: str = "random",
+    identity_by_feat: dict[int, dict[str, float]] | None = None,
+    min_negatives: int = MIN_NEGATIVES,
 ) -> dict[int, list[dict[str, Any]]]:
     """Return {feature_id: [{"entry", "bin", "split"}, ...]}.
 
     Drops features with fewer than MIN_PROTEINS_IN_TOP_THREE proteins across
-    the top three (0.7, 1.0] bins combined.
+    the top three (0.7, 1.0] bins combined, and features with fewer than
+    min_negatives zero-activation negatives (ubiquitous always-on features whose
+    zero pool is empty — see MIN_NEGATIVES).
+
+    negatives="random" (default): zero-activation negatives are picked at random
+      (original InterPLM recipe). negatives="mmseqs": picks the zeros with the
+      highest %identity to the feature's positives (hard negatives), using the
+      identity_by_feat map from compute_close_negative_identities; ties and any
+      shortfall fall back to a random pick over the remaining pool.
     """
+    if negatives == "mmseqs" and identity_by_feat is None:
+        raise ValueError("negatives='mmseqs' requires identity_by_feat")
     rng = np.random.default_rng(seed)
     sampled: dict[int, list[dict[str, Any]]] = {}
     n_dropped_sparse = 0
+    n_dropped_no_negatives = 0
 
     for feat_id, bins in bin_assignments.items():
         top_three = (
@@ -241,10 +423,25 @@ def phase_b_apply_paper_rule(
 
         # Zero-activation negatives
         zeros = [e for e in bins.get((0.0, 0.0), []) if e not in used]
-        rng.shuffle(zeros)
+        rng.shuffle(zeros)  # random base order (and the full "random" recipe)
+        if negatives == "mmseqs":
+            # Hard negatives: most sequence-identity-similar to the positives.
+            # The rng.shuffle above gives a reproducible random tiebreak among
+            # equal-identity zeros; the stable sort then ranks by identity desc.
+            feat_ident = identity_by_feat.get(feat_id, {})
+            zeros.sort(key=lambda e: feat_ident.get(e, 0.0), reverse=True)
+        n_negatives = 0
         for entry in zeros[:N_ZERO_NEGATIVES]:
             picks.append({"entry": entry, "bin": 0})
             used.add(entry)
+            n_negatives += 1
+
+        # Gate: a feature with too few negatives is an always-on (positional/bias)
+        # feature and cannot be cleanly described/scored (no activating-vs-non-
+        # activating contrast). Drop it. See MIN_NEGATIVES.
+        if n_negatives < min_negatives:
+            n_dropped_no_negatives += 1
+            continue
 
         # 50/50 train/eval shuffle
         rng.shuffle(picks)
@@ -259,9 +456,92 @@ def phase_b_apply_paper_rule(
     print(
         f"Phase B: selected examples for {len(sampled)} features; "
         f"dropped {n_dropped_sparse} sparse features (<{MIN_PROTEINS_IN_TOP_THREE} "
-        f"in top 3 bins)"
+        f"in top 3 bins); dropped {n_dropped_no_negatives} ubiquitous features "
+        f"(<{min_negatives} negatives, empty/thin zero pool)"
     )
     return sampled
+
+
+def _report_phase_b_stats(
+    sampled: dict[int, list[dict[str, Any]]],
+    bin_assignments: dict[int, dict[tuple[float, float], list[str]]],
+    identity_by_feat: dict[int, dict[str, float]] | None,
+    negatives: str,
+) -> None:
+    """Print validation stats for --phase-b-only: per-feature pick/split sizes,
+    bin coverage, and (for mmseqs) how much harder the selected negatives are
+    than the random baseline."""
+    if not sampled:
+        print("Phase B stats: no features selected.")
+        return
+
+    n_feats = len(sampled)
+    picks_per_feat = np.array([len(p) for p in sampled.values()])
+    train_per_feat = np.array(
+        [sum(1 for x in p if x["split"] == "train") for p in sampled.values()]
+    )
+    eval_per_feat = np.array(
+        [sum(1 for x in p if x["split"] == "eval") for p in sampled.values()]
+    )
+    neg_per_feat = np.array(
+        [sum(1 for x in p if x["bin"] == 0) for p in sampled.values()]
+    )
+    pos_per_feat = np.array(
+        [sum(1 for x in p if x["bin"] > 0) for p in sampled.values()]
+    )
+    bin_hist: dict[int, int] = defaultdict(int)
+    for p in sampled.values():
+        for x in p:
+            bin_hist[x["bin"]] += 1
+
+    def _summ(name: str, a: np.ndarray) -> str:
+        return (f"  {name:<22} min={a.min()} median={int(np.median(a))} "
+                f"mean={a.mean():.1f} max={a.max()}")
+
+    print("\n=== Phase B validation stats ===")
+    print(f"  describable features:  {n_feats}")
+    print(_summ("picks / feature", picks_per_feat))
+    print(_summ("positives / feature", pos_per_feat))
+    print(_summ("negatives / feature", neg_per_feat))
+    print(_summ("train rows / feature", train_per_feat))
+    print(_summ("eval rows / feature", eval_per_feat))
+    n_short_neg = int((neg_per_feat < N_ZERO_NEGATIVES).sum())
+    print(f"  features with < {N_ZERO_NEGATIVES} negatives (thin zero pool): {n_short_neg}")
+    print(f"  total rows: {int(picks_per_feat.sum())}")
+    print("  picks per bin (0=neg .. 10=top): "
+          f"{ {b: bin_hist[b] for b in sorted(bin_hist)} }")
+
+    if negatives == "mmseqs" and identity_by_feat is not None:
+        # Compare the %identity of the SELECTED negatives against the mean over
+        # each feature's full zero pool (the random-selection expectation).
+        sel_ident: list[float] = []
+        pool_mean_ident: list[float] = []
+        feat_sel_means: list[float] = []
+        feat_pool_means: list[float] = []
+        for feat_id, p in sampled.items():
+            fmap = identity_by_feat.get(feat_id, {})
+            negs = [x["entry"] for x in p if x["bin"] == 0]
+            sel = [fmap.get(e, 0.0) for e in negs]
+            sel_ident.extend(sel)
+            pool_vals = list(fmap.values())
+            pool_mean_ident.extend(pool_vals)
+            if sel:
+                feat_sel_means.append(float(np.mean(sel)))
+            if pool_vals:
+                feat_pool_means.append(float(np.mean(pool_vals)))
+        sel_arr = np.array(sel_ident) if sel_ident else np.array([0.0])
+        pool_arr = np.array(pool_mean_ident) if pool_mean_ident else np.array([0.0])
+        print("\n  -- close-negative selection (mmseqs) --")
+        print(f"  selected-negative %identity:  median={np.median(sel_arr):.3f} "
+              f"mean={sel_arr.mean():.3f} (n={len(sel_arr)})")
+        print(f"  full zero-pool %identity:     median={np.median(pool_arr):.3f} "
+              f"mean={pool_arr.mean():.3f} (n={len(pool_arr)})")
+        if feat_sel_means and feat_pool_means:
+            lift = np.mean(feat_sel_means) - np.mean(feat_pool_means)
+            print(f"  per-feature mean identity lift (selected - pool): {lift:+.3f}")
+        n_zero_ident_sel = int((sel_arr == 0.0).sum())
+        print(f"  selected negatives with 0 identity (no mmseqs hit): "
+              f"{n_zero_ident_sel}/{len(sel_arr)}")
 
 
 # ---------------------------------------------------------------------------
@@ -556,8 +836,49 @@ def main() -> int:
         "binning on a GPU/compute node; a later full run reuses the cache and runs "
         "Phases B-E (Phase D needs internet, so run that where UniProt is reachable).",
     )
+    parser.add_argument(
+        "--phase-b-only",
+        action="store_true",
+        help="Run Phase A (load cached binning) + Phase B (sampling rule, incl. "
+        "close-negative selection) and exit, writing cache/sampled.json plus "
+        "validation stats. CPU-only: needs no GPU/embeddings, just the cached "
+        "bin_assignments.yaml (and proteins.tsv for --negatives mmseqs).",
+    )
+    parser.add_argument(
+        "--negatives",
+        choices=["random", "mmseqs"],
+        default="random",
+        help="Zero-activation negative selection: 'random' (InterPLM recipe, "
+        "default) or 'mmseqs' (hard negatives = zeros most sequence-identity-"
+        "similar to the feature's positives, via MMseqs2 easy-search).",
+    )
+    parser.add_argument(
+        "--sequences-tsv",
+        type=Path,
+        default=None,
+        help="UniProt-style TSV with Entry + Sequence columns (e.g. the eval "
+        "dataset proteins.tsv). Required for --negatives mmseqs; the candidate "
+        "sequences are drawn from here so no embedding store / per-shard metadata "
+        "is needed.",
+    )
+    parser.add_argument("--mmseqs-bin", type=str, default="mmseqs")
+    parser.add_argument("--mmseqs-sensitivity", type=float, default=7.5)
+    parser.add_argument("--mmseqs-threads", type=int, default=4)
+    parser.add_argument(
+        "--min-negatives",
+        type=int,
+        default=MIN_NEGATIVES,
+        help="Drop describable features with fewer than this many zero-activation "
+        "negatives (ubiquitous always-on / positional-bias features with an empty or "
+        f"thin zero pool). Default {MIN_NEGATIVES}. Autointerp detection scoring needs "
+        "activating AND non-activating examples (Bills 2023, Paulo 2025); ubiquitous "
+        "features are filtered in the SAE literature (Ge et al. 2025).",
+    )
     parser.add_argument("--skip-uniprot", action="store_true")
     args = parser.parse_args()
+
+    if args.negatives == "mmseqs" and args.sequences_tsv is None:
+        parser.error("--negatives mmseqs requires --sequences-tsv (e.g. proteins.tsv)")
 
     # Seed for reproducible per-bin sampling (PerProteinActivationTracker.get_results
     # samples via the global np.random) and the Phase B train/eval split rng.
@@ -605,10 +926,47 @@ def main() -> int:
         )
         return 0
 
+    # Close-negative identities (only for --negatives mmseqs)
+    identity_by_feat: dict[int, dict[str, float]] | None = None
+    if args.negatives == "mmseqs":
+        describable = {f: b for f, b in bin_assignments.items() if _is_describable(b)}
+        needed = {
+            p
+            for b in describable.values()
+            for lo_hi in POSITIVE_REFERENCE_BINS
+            for p in b.get(lo_hi, [])
+        } | {z for b in describable.values() for z in b.get((0.0, 0.0), [])}
+        print(f"Close-negatives: loading sequences for {len(needed)} entries from {args.sequences_tsv}")
+        sequences = load_sequences_from_tsv(args.sequences_tsv, needed)
+        print(f"Close-negatives: got sequences for {len(sequences)}/{len(needed)} entries")
+        identity_by_feat = compute_close_negative_identities(
+            bin_assignments=bin_assignments,
+            sequences=sequences,
+            workdir=cache_dir / "close_negatives",
+            mmseqs_bin=args.mmseqs_bin,
+            sensitivity=args.mmseqs_sensitivity,
+            threads=args.mmseqs_threads,
+            seed=args.seed,
+        )
+
     # Phase B: paper rule
-    sampled = phase_b_apply_paper_rule(bin_assignments, seed=args.seed)
+    sampled = phase_b_apply_paper_rule(
+        bin_assignments,
+        seed=args.seed,
+        negatives=args.negatives,
+        identity_by_feat=identity_by_feat,
+        min_negatives=args.min_negatives,
+    )
     with (cache_dir / "sampled.json").open("w") as f:
         json.dump({str(k): v for k, v in sampled.items()}, f)
+
+    if args.phase_b_only:
+        _report_phase_b_stats(sampled, bin_assignments, identity_by_feat, args.negatives)
+        print(
+            f"--phase-b-only: wrote sampling for {len(sampled)} features to "
+            f"{cache_dir / 'sampled.json'}. Stopping before Phase C."
+        )
+        return 0
 
     # Phase C: trace extraction
     traces = phase_c_extract_traces(
