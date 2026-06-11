@@ -8,17 +8,21 @@
 # Define Paths
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
 CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
-DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
-
-# --- re-run override (export RERUN_SAE_DIR to retarget; default = auxfix full run) ---
-SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836}"
+HF_HOME="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/hf_home"
+DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 
 # Mounts: Host:Container
-MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${DATA_DIR}:/workspace/data,${CKPT_DIR}:/workspace/model_checkpoints,${CROSSCODE_DIR}:/workspace/crosscode"
+MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM"
+MOUNTS="${MOUNTS},${CROSSCODE_DIR}:/workspace/crosscode"
+MOUNTS="${MOUNTS},${CKPT_DIR}:/workspace/model_checkpoints"
+MOUNTS="${MOUNTS},${HF_HOME}:/workspace/hf_home"
+MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
+
+SAE_DIR="/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836"
 
 # Env
-export HF_HOME="/workspace/data/hf_home"
+export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 
 mkdir -p logs
