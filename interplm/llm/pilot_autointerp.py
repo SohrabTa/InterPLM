@@ -21,7 +21,7 @@ metadata, build prompts) but:
 Inputs read:
   - model_checkpoints/.../crashed_epoch_0_step_2519836/ (full crosscoder)
   - data/eval_dataset/uniprotkb_modern_score45_67k/proteins.tsv (sequences+meta)
-  - data/dashboard_cache/.../Per_feature_max_examples.yaml (seed activators)
+  - data/dashboard_cache/pre-auxfix/real/.../Per_feature_max_examples.yaml (seed activators)
   - UniProt REST API (richer per-protein metadata)
   - repos/sparse-crosscoders-prott5/.env (ANTHROPIC/OPENAI/DEEPSEEK keys)
 
@@ -66,6 +66,8 @@ MAX_EXAMPLES_YAML = (
     REPO_ROOT
     / "data"
     / "dashboard_cache"
+    / "pre-auxfix"
+    / "real"
     / "uniprotkb_modern_score45_67k"
     / "dashboard_cache"
     / "prott5_crosscoder"

@@ -85,7 +85,7 @@ def get_uniprot_by_sequence(sequence: str):
 
 # Constants
 CROSSCODER_PATH = "/Users/sohrab.tawana/private/crosscoder/model_checkpoints/crosscoder_l8192_k32_bs512_full_2026-03-12_06-03-41/crashed_epoch_0_step_2519836"
-CONCEPT_CSV_PATH = "/Users/sohrab.tawana/private/crosscoder/data/crosscoder_eval/uniprotkb_modern_score45_67k/test_counts/heldout_all_top_pairings.csv"
+CONCEPT_CSV_PATH = "/Users/sohrab.tawana/private/crosscoder/data/crosscoder_eval/pre-auxfix/real/uniprotkb_modern_score45_67k/test_counts/heldout_all_top_pairings.csv"
 
 
 @st.cache_resource
