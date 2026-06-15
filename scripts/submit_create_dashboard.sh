@@ -48,7 +48,7 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      --metadata_path /workspace/data/eval_dataset/uniprotkb_modern_score45_67k/proteins.tsv.gz \
      --concept_enrichment_path ${PAIRINGS} \
      --layer crosscoder \
-     --dashboard_name prott5_crosscoder \
+     --dashboard_name prott5_crosscoder_auxfix \
      --model_name prott5 \
      --model_type Rostlab/prot_t5_xl_uniref50 \
      --shard_range 0 83"
