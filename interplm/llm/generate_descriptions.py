@@ -195,39 +195,59 @@ class FeatureResult:
     error: str | None = None
 
 
+# DeepSeek V4-Pro is a reasoning model: it returns empty `content` with
+# finish_reason="length" when hidden reasoning exhausts the budget. Start the
+# output budget high and escalate on empty (see pilot_autointerp.py and the
+# documentation experiments/06 Lessons).
+MAX_OUTPUT_TOKENS = 16000
+
+
 async def call_chat(
     client: Any,
     model: str,
     system_text: str,
     user_payload: dict[str, Any],
     max_tokens: int,
+    max_attempts: int = 3,
 ) -> CallResult:
+    """One chat call, retrying on empty content by escalating max_tokens when the
+    model stopped on finish_reason="length" (reasoning models like DeepSeek V4-Pro
+    spend the budget on hidden reasoning and return empty content — the only
+    reliable fix is a bigger budget; json mode / temperature do not help). Usage is
+    accumulated across attempts so cost accounting stays correct."""
     t0 = time.time()
-    try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_text},
-                {
-                    "role": "user",
-                    "content": json.dumps(user_payload, ensure_ascii=False),
-                },
-            ],
-            max_tokens=max_tokens,
-            temperature=0.0,
-        )
-        dt = time.time() - t0
+    user_text = json.dumps(user_payload, ensure_ascii=False)
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    budget = max_tokens
+    text = ""
+    for _attempt in range(max_attempts):
+        try:
+            resp = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_text},
+                    {"role": "user", "content": user_text},
+                ],
+                max_tokens=budget,
+                temperature=0.0,
+            )
+        except Exception as e:
+            return CallResult(
+                text="", usage=usage, latency_s=time.time() - t0, error=str(e),
+            )
+        usage["input_tokens"] += int(resp.usage.prompt_tokens)
+        usage["output_tokens"] += int(resp.usage.completion_tokens)
         text = resp.choices[0].message.content or ""
-        usage = {
-            "input_tokens": resp.usage.prompt_tokens,
-            "output_tokens": resp.usage.completion_tokens,
-        }
-        return CallResult(text=text, usage=usage, latency_s=dt)
-    except Exception as e:
-        return CallResult(
-            text="", usage={"input_tokens": 0, "output_tokens": 0},
-            latency_s=time.time() - t0, error=str(e),
-        )
+        if text.strip():
+            return CallResult(text=text, usage=usage, latency_s=time.time() - t0)
+        if resp.choices[0].finish_reason == "length":
+            budget = min(budget * 2, 32000)  # reasoning starved the answer; give more room
+        else:
+            break
+    return CallResult(
+        text=text, usage=usage, latency_s=time.time() - t0,
+        error="empty content after retries",
+    )
 
 
 async def process_one_feature(
@@ -242,7 +262,7 @@ async def process_one_feature(
         # Description call
         desc_payload = build_description_payload(rows)
         desc_call = await call_chat(
-            client, model, SYSTEM_DESCRIPTION, desc_payload, max_tokens=1500
+            client, model, SYSTEM_DESCRIPTION, desc_payload, max_tokens=MAX_OUTPUT_TOKENS
         )
         if desc_call.error:
             return FeatureResult(
@@ -282,7 +302,7 @@ async def process_one_feature(
         # Prediction call
         pred_payload = build_prediction_payload(rows, description, summary)
         pred_call = await call_chat(
-            client, model, SYSTEM_PREDICTION, pred_payload, max_tokens=1500
+            client, model, SYSTEM_PREDICTION, pred_payload, max_tokens=MAX_OUTPUT_TOKENS
         )
         if pred_call.error:
             return FeatureResult(
@@ -363,6 +383,14 @@ async def process_one_feature(
 # ---------------------------------------------------------------------------
 
 
+def _atomic_to_parquet(df: pd.DataFrame, path: Path) -> None:
+    """Write a parquet crash-safely (temp file + os.replace), so an interrupted
+    checkpoint flush can't truncate the results file mid-write."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
 async def run_endpoint(
     endpoint_name: str,
     base_url: str,
@@ -370,6 +398,8 @@ async def run_endpoint(
     model: str,
     df: pd.DataFrame,
     concurrency: int,
+    checkpoint_path: Path | None = None,
+    prior_df: pd.DataFrame | None = None,
 ) -> list[FeatureResult]:
     from openai import AsyncOpenAI
 
@@ -397,6 +427,14 @@ async def run_endpoint(
                 f"[{endpoint_name}] {i + 1}/{len(tasks)} done "
                 f"({time.time() - t0:.0f}s elapsed)"
             )
+            # Incremental checkpoint (prior completed features + new so far), so an
+            # interruption mid-run loses at most ~10 features and a resume skips the
+            # rest instead of re-billing them.
+            if checkpoint_path is not None:
+                so_far = feature_results_to_df(results)
+                if prior_df is not None and len(prior_df):
+                    so_far = pd.concat([prior_df, so_far], ignore_index=True)
+                _atomic_to_parquet(so_far, checkpoint_path)
     return results
 
 
@@ -453,24 +491,55 @@ async def amain(args: argparse.Namespace) -> int:
     print(f"Processing {df['feature_id'].nunique()} features")
 
     endpoints = parse_endpoints(args.endpoints)
-    api_key = os.environ.get("VLLM_API_KEY", "EMPTY")
+    # Load API keys from a .env (the project keeps them in
+    # repos/sparse-crosscoders-prott5/.env). Harmless if already exported.
+    try:
+        from dotenv import load_dotenv
+        if args.env_file:
+            load_dotenv(args.env_file, override=False)
+        load_dotenv(override=False)
+    except Exception:
+        pass
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    all_results: list[FeatureResult] = []
     for name, url in endpoints:
+        # Per-endpoint API key: <NAME>_API_KEY (e.g. DEEPSEEK_API_KEY for a
+        # deepseek=… endpoint) else VLLM_API_KEY for self-hosted endpoints.
+        api_key = os.environ.get(f"{name.upper()}_API_KEY") or os.environ.get(
+            "VLLM_API_KEY", "EMPTY"
+        )
         # Allow per-endpoint model override via env var, else use --model
         model = os.environ.get(f"VLLM_MODEL_{name.upper()}", args.model)
+
+        # Resume: if a (checkpointed or completed) results file exists, skip the
+        # features already scored so we don't re-bill them. prior_df carries them
+        # into the incremental checkpoint so the file stays complete throughout.
+        ckpt_path = args.output_dir / f"results_{name}.parquet"
+        prior_df = None
+        endpoint_df_in = df
+        if ckpt_path.exists():
+            prior_df = pd.read_parquet(ckpt_path)
+            done = set(prior_df["feature_id"].astype(int))
+            endpoint_df_in = df[~df["feature_id"].astype(int).isin(done)]
+            print(
+                f"[{name}] resuming: {len(done)} features already scored, "
+                f"{endpoint_df_in['feature_id'].nunique()} remaining"
+            )
+
         results = await run_endpoint(
             endpoint_name=name,
             base_url=url,
             api_key=api_key,
             model=model,
-            df=df,
+            df=endpoint_df_in,
             concurrency=args.concurrency,
+            checkpoint_path=ckpt_path,
+            prior_df=prior_df,
         )
         endpoint_df = feature_results_to_df(results)
-        endpoint_df.to_parquet(args.output_dir / f"results_{name}.parquet", index=False)
-        all_results.extend(results)
+        if prior_df is not None and len(prior_df):
+            endpoint_df = pd.concat([prior_df, endpoint_df], ignore_index=True)
+        _atomic_to_parquet(endpoint_df, ckpt_path)
 
         valid = endpoint_df.dropna(subset=["pearson_r"])
         n_err = endpoint_df["error"].notna().sum()
@@ -486,9 +555,18 @@ async def amain(args: argparse.Namespace) -> int:
             f"{endpoint_df['prediction_latency_s'].mean():.1f}s"
         )
 
-    combined = feature_results_to_df(all_results)
-    combined.to_parquet(args.output_dir / "results_combined.parquet", index=False)
-    print(f"\nWrote combined results to {args.output_dir / 'results_combined.parquet'}")
+    # Build the combined file from the (complete, resume-merged) per-endpoint files
+    # rather than from all_results, which holds only features scored this invocation.
+    per_endpoint = [
+        pd.read_parquet(args.output_dir / f"results_{name}.parquet")
+        for name, _ in endpoints
+        if (args.output_dir / f"results_{name}.parquet").exists()
+    ]
+    if per_endpoint:
+        combined = pd.concat(per_endpoint, ignore_index=True)
+        _atomic_to_parquet(combined, args.output_dir / "results_combined.parquet")
+        print(f"\nWrote combined results ({len(combined)} rows) to "
+              f"{args.output_dir / 'results_combined.parquet'}")
     return 0
 
 
@@ -537,6 +615,13 @@ def main() -> int:
         type=str,
         default="",
         help="Comma-separated feature ids to restrict to. Overrides --max-features.",
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Optional .env to load API keys from (e.g. repos/sparse-crosscoders-prott5/.env). "
+        "Keys resolve as <ENDPOINT>_API_KEY (e.g. DEEPSEEK_API_KEY) else VLLM_API_KEY.",
     )
     args = parser.parse_args()
     return asyncio.run(amain(args))

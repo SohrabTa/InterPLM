@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -676,38 +678,108 @@ def phase_c_extract_traces(
 # ---------------------------------------------------------------------------
 
 
+def _atomic_json_dump(obj: Any, path: Path) -> None:
+    """Write JSON crash-safely: dump to a temp file in the same dir, then replace.
+
+    The old in-place `open(path,"w")` truncated the file first, so a kill during
+    the dump left a corrupt (truncated) cache that crashed the next resume. A
+    temp-then-os.replace keeps the previous good file intact until the new one is
+    fully written and atomically swapped.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w") as f:
+        json.dump(obj, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+# UniProt REST "accessions" endpoint: retrieve a known list of accessions in bulk.
+# Empirically returns up to 500 (accepts more) entries per request in ~0.8 s with no
+# pagination, so ~17k accessions go from ~2 h of sequential single-entry GETs down to
+# ~34 requests (< 2 min). The "stream" endpoint is query-based and can't take an
+# explicit 17k-id list (URL-length limit), so it does not fit this use.
+UNIPROT_ACCESSIONS_URL = "https://rest.uniprot.org/uniprotkb/accessions"
+UNIPROT_BATCH = 500
+# Official UniProtKB accession syntax. The accessions endpoint 400s the WHOLE batch
+# if any id is syntactically invalid (a well-formed but nonexistent id is fine — it is
+# just omitted from results), so malformed ids are filtered out and cached as {} rather
+# than sent, to avoid poisoning a 500-id batch over one bad id.
+UNIPROT_ACC_RE = re.compile(
+    r"^[OPQ][0-9][A-Z0-9]{3}[0-9]$|^[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2}$"
+)
+
+
 def phase_d_fetch_uniprot(
-    entries: set[str], cache_path: Path, sleep_s: float = 0.1
+    entries: set[str], cache_path: Path, sleep_s: float = 0.3
 ) -> dict[str, dict[str, Any]]:
     cache: dict[str, dict[str, Any]] = {}
     if cache_path.exists():
-        with cache_path.open() as f:
-            cache = json.load(f)
-        print(f"Phase D: loaded {len(cache)} cached UniProt records from {cache_path}")
-    todo = sorted(entries - set(cache.keys()))
-    print(f"Phase D: fetching {len(todo)} new UniProt records")
-
-    for i, entry in enumerate(todo):
-        url = (
-            f"https://rest.uniprot.org/uniprotkb/{entry}.json?fields={UNIPROT_FIELDS}"
-        )
         try:
-            resp = requests.get(url, timeout=15)
-            resp.raise_for_status()
-            cache[entry] = resp.json()
-        except Exception as e:
-            print(f"  ! {entry}: {e}")
-            cache[entry] = {}
-        if (i + 1) % 100 == 0:
-            with cache_path.open("w") as f:
-                json.dump(cache, f)
-            print(f"  fetched {i + 1}/{len(todo)}, cache flushed")
+            with cache_path.open() as f:
+                cache = json.load(f)
+            print(f"Phase D: loaded {len(cache)} cached UniProt records from {cache_path}")
+        except (json.JSONDecodeError, ValueError) as e:
+            # A truncated/corrupt cache (e.g. killed mid-write) must not abort the
+            # whole run; degrade to re-fetching. (_atomic_json_dump prevents this
+            # going forward.)
+            print(f"Phase D: cache {cache_path} is corrupt ({e}); starting fresh")
+            cache = {}
+    pending = sorted(entries - set(cache.keys()))
+    todo = [a for a in pending if UNIPROT_ACC_RE.match(a)]
+    malformed = [a for a in pending if not UNIPROT_ACC_RE.match(a)]
+    for a in malformed:
+        cache[a] = {}  # never send: would 400 the whole batch
+    if malformed:
+        print(f"Phase D: {len(malformed)} malformed accessions cached as empty, "
+              f"e.g. {malformed[:5]}")
+    n_batches = (len(todo) + UNIPROT_BATCH - 1) // UNIPROT_BATCH
+    print(f"Phase D: fetching {len(todo)} new UniProt records in {n_batches} "
+          f"batches of {UNIPROT_BATCH}")
+
+    session = requests.Session()
+    n_found = 0
+    for bi in range(n_batches):
+        batch = todo[bi * UNIPROT_BATCH : (bi + 1) * UNIPROT_BATCH]
+        params = {
+            "accessions": ",".join(batch),
+            "format": "json",
+            "fields": UNIPROT_FIELDS,
+        }
+        results = None
+        for attempt in range(4):
+            try:
+                resp = session.get(UNIPROT_ACCESSIONS_URL, params=params, timeout=60)
+                resp.raise_for_status()
+                results = resp.json().get("results", [])
+                break
+            except Exception as e:
+                print(f"  ! batch {bi + 1}/{n_batches} attempt {attempt + 1}: {e}")
+                time.sleep(2 * (attempt + 1))
+        if results is None:
+            # Whole-batch failure (network): leave these for the next resume rather
+            # than poisoning the cache with empties. Do NOT flush them as {}.
+            print(f"  ! batch {bi + 1}/{n_batches} failed after retries; "
+                  f"leaving {len(batch)} accessions for next run")
+            continue
+        # Index returned entries by primary accession (secondaryAccessions is not in
+        # the requested field set, so a queried *secondary* accession won't match and
+        # is cached as {} — rare for the curated Swiss-Prot accessions we use).
+        by_acc = {o["primaryAccession"]: o for o in results if o.get("primaryAccession")}
+        for acc in batch:
+            obj = by_acc.get(acc, {})
+            cache[acc] = obj
+            if obj:
+                n_found += 1
+        _atomic_json_dump(cache, cache_path)
+        print(f"  batch {bi + 1}/{n_batches}: {len(results)} returned "
+              f"({(bi + 1) * UNIPROT_BATCH if bi + 1 < n_batches else len(todo)}/{len(todo)} done), cache flushed")
         time.sleep(sleep_s)
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    with cache_path.open("w") as f:
-        json.dump(cache, f)
-    print(f"Phase D: wrote {len(cache)} UniProt records to {cache_path}")
+    _atomic_json_dump(cache, cache_path)
+    print(f"Phase D: wrote {len(cache)} UniProt records to {cache_path} "
+          f"({n_found}/{len(todo)} newly fetched had metadata)")
     return cache
 
 
@@ -788,6 +860,13 @@ def parse_feature_ids(arg: str, sae_dir: Path) -> list[int]:
         live = (sae.activation_rescale_factor > 0).nonzero().squeeze().tolist()
         print(f"--feature-ids live → {len(live)} live features")
         return [int(x) for x in live]
+    if arg.startswith("@"):
+        # @path: read ids from a file (whitespace/comma/newline separated ints,
+        # e.g. the fitness-feature list). Lets a long subset bypass the CLI.
+        text = Path(arg[1:]).read_text().replace(",", " ")
+        ids = [int(x) for x in text.split() if x.strip()]
+        print(f"--feature-ids @{arg[1:]} → {len(ids)} features")
+        return ids
     return [int(x) for x in arg.split(",") if x.strip()]
 
 
@@ -914,6 +993,22 @@ def main() -> int:
         n_per_bin_to_sample=args.n_per_bin,
         n_zero_to_sample=args.n_zero,
     )
+
+    # On a cache-hit phase_a returns the full cached binning (all features it was
+    # computed for), so an explicit --feature-ids subset must be re-applied here to
+    # restrict Phases B-E. (Skip when 'live': the cache already IS the live set.)
+    if args.feature_ids.lower() != "live":
+        requested = set(feature_ids)
+        present = requested & set(bin_assignments)
+        missing = requested - present
+        if missing:
+            print(
+                f"Filtering to --feature-ids subset: {len(present)}/{len(requested)} "
+                f"present in the binning; {len(missing)} missing (not binned/not live), "
+                f"e.g. {sorted(missing)[:10]}"
+            )
+        bin_assignments = {f: bin_assignments[f] for f in feature_ids if f in present}
+        print(f"Running Phases B-E on {len(bin_assignments)} features.")
 
     if args.phase_a_only:
         n_bins_populated = sum(
