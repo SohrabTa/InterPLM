@@ -28,6 +28,7 @@ def collect_feature_activations(
     shard_range: Optional[List[int]] = None,
     activation_threshold: float = 0.05,
     checkpoint: str = "ae_normalized.pt",
+    acts_dir: Optional[Path] = None,
 ):
     """
     Analyze SAE features and find max activating proteins.
@@ -85,6 +86,7 @@ def collect_feature_activations(
         aa_metadata_dir=metadata_dir,
         shards_to_search=shards,
         activation_threshold=activation_threshold,
+        acts_dir=acts_dir,
         # Uses default loaders: load_shard_embeddings() for embeddings
         # and _get_protein_ids() for metadata
     )

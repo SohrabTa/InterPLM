@@ -25,12 +25,34 @@ class ProtT5CrosscoderEmbedder(BaseEmbedder):
         model_name: str = "Rostlab/prot_t5_xl_uniref50",
         device: Optional[str] = None,
         max_length: int = 2000,
+        dtype: torch.dtype = torch.float32,
     ):
+        """
+        Args:
+            dtype: precision to run ProtT5 at. Defaults to float32.
+
+                This used to be ``torch.float16 if torch.cuda.is_available() else
+                torch.float32`` -- the ProtTrans idiom, since half precision is a
+                GPU-only option there. It never took effect: the kwarg was passed
+                as ``torch_dtype``, which the transformers version in the LRZ
+                container deprecated *and dropped* ("`torch_dtype` is deprecated!
+                Use `dtype` instead!", logs/interplm/pre-auxfix/real/
+                uniprotkb_modern_score45_67k/embed_5616125.err:26). Every stored
+                eval embedding is therefore float32, verified on the cluster
+                copies (FloatStorage, 24*1024*4 bytes/residue).
+
+                We now set it explicitly, and to float32, for two reasons: the
+                crosscoder was trained on float32 ProtT5 activations
+                (``inference_dtype=float32``), so half precision at eval is a
+                train/eval mismatch; and it keeps every number comparable to the
+                existing runs. See insights.md 2026-07-04.
+        """
         if device is None:
             device = get_device()
 
         super().__init__(model_name, device)
         self.max_length = max_length
+        self.dtype = dtype
         self.model = None
         self.tokenizer = None
 
@@ -44,11 +66,8 @@ class ProtT5CrosscoderEmbedder(BaseEmbedder):
             self.model_name, do_lower_case=False
         )
 
-        # Load in mixed precision if optimal
-        self.model = T5EncoderModel.from_pretrained(
-            self.model_name,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        )
+        # `dtype` (not the deprecated `torch_dtype`) so the request is actually honored.
+        self.model = T5EncoderModel.from_pretrained(self.model_name, dtype=self.dtype)
 
         self.model = self.model.to(self.device)
         self.model.eval()

@@ -52,6 +52,16 @@ def main():
         help="F1 threshold for reporting top pairings",
     )
     parser.add_argument(
+        "--acts_dir",
+        type=str,
+        default=None,
+        help=(
+            "Sparse crosscoder-activation store to read instead of embeddings "
+            "(scripts/encode_activations.py). Skips the encode; --aa_embds_dir "
+            "and the SAE are then unused."
+        ),
+    )
+    parser.add_argument(
         "--is_sparse",
         action="store_true",
         default=True,
@@ -84,6 +94,7 @@ def main():
             output_dir=counts_dir,
             threshold_percents=args.thresholds,
             is_sparse=args.is_sparse,
+            acts_dir=Path(args.acts_dir) if args.acts_dir else None,
         )
 
         # Step 2: Combine metrics and calculate F1

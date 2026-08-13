@@ -18,6 +18,11 @@ from interplm.sae.dictionary import Dictionary
 from interplm.sae.inference import get_sae_feats_in_batches, split_up_feature_list
 from interplm.utils import get_device
 from interplm.data_processing.embedding_loader import load_shard_embeddings
+from interplm.analysis.activation_store import (
+    feature_subset,
+    load_shard_activations,
+    protein_ids_per_residue,
+)
 
 
 class PerProteinActivationTracker:
@@ -319,6 +324,7 @@ def find_max_examples_per_feat(
     activation_threshold: float = 0.05,  # Minimum activation to count as "activated"
     n_per_bin_to_sample: int = 10,  # Max proteins sampled per quantile bin in get_results
     n_zero_to_sample: int | None = None,  # Zero-bin pool size (reservoir); defaults to n_per_bin_to_sample
+    acts_dir: Path | None = None,  # Read a sparse activation store instead of embeddings
 ):
     """
     Find proteins that maximally activate each feature in the sparse autoencoder.
@@ -368,6 +374,40 @@ def find_max_examples_per_feat(
         print(f"Processing shard {shard} ({shard_idx+1}/{len(shards_to_search)})...")
 
         try:
+            if acts_dir is not None:
+                # Pre-computed raw activations: no embeddings, no encode. The
+                # per-feature divisor is applied here, exactly where the encode
+                # path applied it via normalize_features=True.
+                cached_acts, acts_meta = load_shard_activations(acts_dir, shard)
+                uniprot_id_per_aa = pd.Series(
+                    protein_ids_per_residue(acts_meta), name="protein_id"
+                )
+                rescale = sae.activation_rescale_factor.detach().cpu().numpy()
+
+                prot_id_to_idx = defaultdict(list)
+                for i, prot_id in enumerate(uniprot_id_per_aa):
+                    prot_id_to_idx[prot_id].append(i)
+
+                for feature_list in tqdm(
+                    split_up_feature_list(
+                        total_features=total_features,
+                        max_feature_chunk_size=feature_chunk_size,
+                    ),
+                    desc=f"Processing feature chunks for shard {shard}",
+                ):
+                    chunk = feature_subset(cached_acts, feature_list, rescale=rescale)
+                    sae_feats = chunk.toarray()
+                    for prot_id, prot_idx in prot_id_to_idx.items():
+                        tracker.update(
+                            sae_feats[prot_idx],
+                            protein_id=prot_id,
+                            feature_ids=feature_list,
+                        )
+                    del sae_feats, chunk
+
+                del cached_acts, uniprot_id_per_aa, prot_id_to_idx
+                continue
+
             # Load embeddings - get full data with metadata if available
             shard_data = load_shard_embeddings(aa_embeds_dir, shard, device, return_tensor_only=False)
 

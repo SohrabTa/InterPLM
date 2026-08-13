@@ -14,7 +14,7 @@ use a dense implementation for the neuron activations that can be set via the is
 
 import json
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -25,6 +25,7 @@ from interplm.analysis.concepts.concept_constants import is_aa_level_concept
 from interplm.sae.dictionary import Dictionary
 from interplm.sae.inference import get_sae_feats_in_batches, load_sae
 from interplm.data_processing.embedding_loader import load_shard_embeddings
+from interplm.analysis.activation_store import load_shard_activations
 
 
 def count_unique_nonzero_sparse(
@@ -241,6 +242,8 @@ def process_shard(
     is_aa_concept_list: List[bool],
     feat_chunk_max: int = 512,
     is_sparse: bool = True,
+    cached_acts: Optional[sparse.csr_matrix] = None,
+    n_features_override: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Process a shard of data by splitting it into manageable chunks for feature calculation.
@@ -254,6 +257,12 @@ def process_shard(
         is_aa_concept_list: Boolean flags indicating if each concept is AA-level
         feat_chunk_max: Maximum chunk size for feature processing
         is_sparse: Whether to use sparse matrix operations
+        cached_acts: Pre-computed raw crosscoder activations for this shard
+            (residues x latents, CSR). When given, the PLM embeddings are not
+            needed and no encode is run -- the feature chunks are column slices.
+            See interplm/analysis/activation_store.py.
+        n_features_override: Latent count, required when cached_acts is used and
+            no SAE is loaded.
 
     Returns:
         Tuple of arrays (tp, fp, tp_per_domain) containing calculated metrics
@@ -265,15 +274,18 @@ def process_shard(
         aa_acts = aa_embeddings
 
     # Calculate chunking parameters
-    feature_chunk_size = min(feat_chunk_max, sae.dict_size)
-    total_features = sae.dict_size
+    n_features_total = (
+        n_features_override if n_features_override is not None else sae.dict_size
+    )
+    feature_chunk_size = min(feat_chunk_max, n_features_total)
+    total_features = n_features_total
     num_chunks = int(np.ceil(total_features / feature_chunk_size))
     print(f"Calculating over {total_features} features in {num_chunks} chunks")
 
     # Initialize result arrays
     n_concepts = per_token_labels.shape[1]
     n_thresholds = len(threshold_percents)
-    n_features = sae.dict_size
+    n_features = n_features_total
     tp = np.zeros((n_concepts, n_features, n_thresholds))
     fp = np.zeros((n_concepts, n_features, n_thresholds))
     tp_per_domain = np.zeros((n_concepts, n_features, n_thresholds))
@@ -285,18 +297,28 @@ def process_shard(
 
     # Process each chunk of features
     for feature_list in tqdm(np.array_split(range(total_features), num_chunks)):
-        # Get SAE features for current chunk
-        sae_feats = get_sae_feats_in_batches(
-            sae=sae,
-            device=device,
-            aa_embds=aa_acts,
-            chunk_size=1024,
-            feat_list=feature_list,
-        )
+        if cached_acts is not None:
+            # Column slice of the pre-computed activations -- no encode, no PLM
+            # embeddings. Raw scale, matching what the encode path produced.
+            sae_feats_chunk = cached_acts[:, np.asarray(feature_list)]
+            sae_feats = None
+        else:
+            # Get SAE features for current chunk
+            sae_feats = get_sae_feats_in_batches(
+                sae=sae,
+                device=device,
+                aa_embds=aa_acts,
+                chunk_size=1024,
+                feat_list=feature_list,
+            )
 
         # Calculate metrics using either sparse or dense implementation
         if is_sparse:
-            sae_feats_sparse = sparse.csr_matrix(sae_feats.cpu().numpy())
+            sae_feats_sparse = (
+                sparse.csr_matrix(sae_feats_chunk)
+                if cached_acts is not None
+                else sparse.csr_matrix(sae_feats.cpu().numpy())
+            )
             metrics = calc_metrics_sparse(
                 sae_feats_sparse,
                 per_token_labels,
@@ -304,8 +326,16 @@ def process_shard(
                 is_aa_concept_list,
             )
         else:
+            dense_feats = (
+                torch.tensor(
+                    sae_feats_chunk.toarray(),
+                    device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                )
+                if cached_acts is not None
+                else sae_feats
+            )
             metrics = calc_metrics_dense(
-                sae_feats, per_token_labels, threshold_percents, is_aa_concept_list
+                dense_feats, per_token_labels, threshold_percents, is_aa_concept_list
             )
 
         # Update results arrays with computed metrics
@@ -325,6 +355,7 @@ def analyze_concepts(
     threshold_percents: List[float] = [0, 0.15, 0.5, 0.6, 0.8],
     shard: int | None = None,
     is_sparse: bool = True,
+    acts_dir: Path | None = None,
 ):
     """
     Analyzes concepts in protein sequences using a Sparse Autoencoder (SAE) model.
@@ -353,8 +384,9 @@ def analyze_concepts(
     with open(eval_set_dir / "metadata.json", "r") as f:
         eval_set_metadata = json.load(f)
 
-    # Verify that the normalized SAE model exists
-    if not (sae_dir / "ae_normalized.pt").exists():
+    # When reading a pre-computed activation store there is nothing to encode,
+    # so no SAE (and no GPU) is needed.
+    if acts_dir is None and not (sae_dir / "ae_normalized.pt").exists():
         raise ValueError(f"Normalized SAE model not found in {sae_dir}")
 
     # Validate that the specified shard exists in the evaluation set
@@ -391,15 +423,28 @@ def analyze_concepts(
     # Set up device (GPU if available, otherwise CPU)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load the normalized SAE model
-    sae = load_sae(model_dir=sae_dir, model_name="ae_normalized.pt", device=device)
+    if acts_dir is not None:
+        cached_acts, acts_meta = load_shard_activations(acts_dir, shard)
+        if cached_acts.shape[0] != per_token_labels.shape[0]:
+            raise ValueError(
+                f"shard {shard}: {cached_acts.shape[0]} residues in the activation "
+                f"store but {per_token_labels.shape[0]} label rows"
+            )
+        sae = None
+        embeddings = None
+        n_features_override = acts_meta["n_latents"]
+    else:
+        cached_acts = None
+        n_features_override = None
+        # Load the normalized SAE model
+        sae = load_sae(model_dir=sae_dir, model_name="ae_normalized.pt", device=device)
 
-    # Load embeddings using centralized loader (auto-detects format)
-    embeddings = load_shard_embeddings(aa_embds_dir, shard, device=str(device))
+        # Load embeddings using centralized loader (auto-detects format)
+        embeddings = load_shard_embeddings(aa_embds_dir, shard, device=str(device))
 
-    # Extract just the embeddings tensor if it's in dict format
-    if isinstance(embeddings, dict) and 'embeddings' in embeddings:
-        embeddings = embeddings['embeddings']
+        # Extract just the embeddings tensor if it's in dict format
+        if isinstance(embeddings, dict) and 'embeddings' in embeddings:
+            embeddings = embeddings['embeddings']
 
     # Process the shard and get results (true positives, false positives, and true positives per domain)
     (tp, fp, tp_per_domain) = process_shard(
@@ -411,6 +456,8 @@ def analyze_concepts(
         is_aa_concept_list,
         feat_chunk_max=250,
         is_sparse=is_sparse,
+        cached_acts=cached_acts,
+        n_features_override=n_features_override,
     )
 
     # Create output directory if it doesn't exist and save results
@@ -430,6 +477,7 @@ def analyze_all_shards_in_set(
     output_dir: Path = "concept_results",
     threshold_percents: List[float] = [0, 0.15, 0.5, 0.6, 0.8],
     is_sparse: bool = True,
+    acts_dir: Path | None = None,
 ):
     """Wrapper to scan calculate metrics across all shards in an evaluation set.
 
@@ -463,6 +511,7 @@ def analyze_all_shards_in_set(
             threshold_percents,
             shard,
             is_sparse,
+            acts_dir,
         )
 
 
