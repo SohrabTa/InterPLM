@@ -21,6 +21,7 @@ from interplm.data_processing.embedding_loader import (
     ShardDataLoader,
     detect_and_create_loader
 )
+from interplm.analysis.activation_store import available_shards, load_shard_activations
 
 def calculate_feature_statistics(
     sae: torch.nn.Module,
@@ -104,6 +105,43 @@ def calculate_feature_statistics(
     return max_per_feat
 
 
+def calculate_feature_statistics_from_store(
+    acts_dir: Path, num_features: int
+) -> torch.Tensor:
+    """Per-feature max over a sparse activation store.
+
+    The embedding-based version re-runs the crosscoder over every shard in
+    feature chunks. With a store the activations already exist, so this is one
+    pass of column maxima over CSR data. No PLM, no GPU, minutes not hours.
+
+    The store holds RAW activations, which is exactly what the max must be taken
+    over -- `activation_rescale_factor` is defined as the raw per-feature max.
+    """
+    import numpy as np
+
+    max_per_feat = np.zeros(num_features, dtype=np.float32)
+    shards = available_shards(acts_dir)
+    if not shards:
+        raise FileNotFoundError(f"No activation shards found in {acts_dir}")
+
+    for i, shard_idx in enumerate(shards):
+        acts, meta = load_shard_activations(acts_dir, shard_idx)
+        if meta["n_latents"] != num_features:
+            raise ValueError(
+                f"shard {shard_idx} has {meta['n_latents']} latents, expected {num_features}"
+            )
+        # .max(axis=0) on CSR returns a sparse row; densify the 1 x F result.
+        shard_max = np.asarray(acts.max(axis=0).todense()).ravel()
+        np.maximum(max_per_feat, shard_max, out=max_per_feat)
+        print(f"  shard {shard_idx} ({i+1}/{len(shards)}): running alive count "
+              f"{int((max_per_feat > 0).sum())}/{num_features}")
+
+    print(f"\nFinal statistics:")
+    print(f"  Features with max value of 0: {int((max_per_feat == 0).sum())}")
+    print(f"  Features that were non-zero at least once: {int((max_per_feat > 0).sum())}")
+    return torch.from_numpy(max_per_feat)
+
+
 def create_normalized_model(
     sae: torch.nn.Module, max_per_feat: torch.Tensor
 ) -> torch.nn.Module:
@@ -134,11 +172,12 @@ def create_normalized_model(
 
 def normalize_sae_features(
     sae_dir: Path, 
-    aa_embds_dir: Path, 
+    aa_embds_dir: Optional[Path] = None,
     n_shards: Optional[int] = None,
     data_loader: Optional[ShardDataLoader] = None,
     loader_type: Optional[str] = None,
     nested_filename: Optional[str] = None,
+    acts_dir: Optional[Path] = None,
 ) -> None:
     """
     Calculate feature statistics and create a normalized version of the SAE model.
@@ -159,18 +198,24 @@ def normalize_sae_features(
     feat_stat_cache.mkdir(parents=True, exist_ok=True)
 
     # Create or configure data loader
-    if data_loader is None:
+    if data_loader is None and acts_dir is None:
         # Auto-detect is the only option now since loader classes are in embedding_loader module
         data_loader = detect_and_create_loader(aa_embds_dir)
 
     # Load model and calculate statistics
     print("Loading SAE model and calculating feature statistics...")
     sae = load_sae(sae_dir)
-    max_per_feat = calculate_feature_statistics(
-        sae=sae, 
-        data_loader=data_loader, 
-        n_shards=n_shards
-    )
+    if acts_dir is not None:
+        print(f"Reading the sparse activation store at {acts_dir} (no PLM, no GPU)")
+        max_per_feat = calculate_feature_statistics_from_store(
+            acts_dir=acts_dir, num_features=sae.dict_size
+        )
+    else:
+        max_per_feat = calculate_feature_statistics(
+            sae=sae,
+            data_loader=data_loader,
+            n_shards=n_shards
+        )
 
     # Save statistics
     np.save(feat_stat_cache / "max.npy", max_per_feat.cpu().numpy())

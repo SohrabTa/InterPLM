@@ -25,7 +25,7 @@ from interplm.analysis.concepts.concept_constants import is_aa_level_concept
 from interplm.sae.dictionary import Dictionary
 from interplm.sae.inference import get_sae_feats_in_batches, load_sae
 from interplm.data_processing.embedding_loader import load_shard_embeddings
-from interplm.analysis.activation_store import load_shard_activations
+from interplm.analysis.activation_store import feature_subset, load_shard_activations
 
 
 def count_unique_nonzero_sparse(
@@ -244,6 +244,7 @@ def process_shard(
     is_sparse: bool = True,
     cached_acts: Optional[sparse.csr_matrix] = None,
     n_features_override: Optional[int] = None,
+    rescale: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Process a shard of data by splitting it into manageable chunks for feature calculation.
@@ -263,6 +264,11 @@ def process_shard(
             See interplm/analysis/activation_store.py.
         n_features_override: Latent count, required when cached_acts is used and
             no SAE is loaded.
+        rescale: Per-feature activation_rescale_factor. When given, activations
+            are divided by it before thresholding, putting them on the [0, 1]
+            scale the thresholds were written for. When None the raw scale is
+            used, which is what every eval before 2026-08-13 did (a bug -- see
+            documentation/experiments/02, "The eval read raw activations").
 
     Returns:
         Tuple of arrays (tp, fp, tp_per_domain) containing calculated metrics
@@ -300,7 +306,7 @@ def process_shard(
         if cached_acts is not None:
             # Column slice of the pre-computed activations -- no encode, no PLM
             # embeddings. Raw scale, matching what the encode path produced.
-            sae_feats_chunk = cached_acts[:, np.asarray(feature_list)]
+            sae_feats_chunk = feature_subset(cached_acts, feature_list, rescale=rescale)
             sae_feats = None
         else:
             # Get SAE features for current chunk
@@ -356,6 +362,7 @@ def analyze_concepts(
     shard: int | None = None,
     is_sparse: bool = True,
     acts_dir: Path | None = None,
+    normalize_features: bool = False,
 ):
     """
     Analyzes concepts in protein sequences using a Sparse Autoencoder (SAE) model.
@@ -425,6 +432,19 @@ def analyze_concepts(
 
     if acts_dir is not None:
         cached_acts, acts_meta = load_shard_activations(acts_dir, shard)
+        if normalize_features:
+            # feature_stats/max.npy is the normalize stage's raw per-feature max,
+            # i.e. the same vector ae_normalized.pt carries as
+            # activation_rescale_factor. Reading it avoids loading the crosscoder.
+            max_path = Path(sae_dir) / "feature_stats" / "max.npy"
+            if not max_path.exists():
+                raise ValueError(
+                    f"normalize_features=True needs {max_path}; run the normalize "
+                    f"stage on this activation store first"
+                )
+            rescale = np.load(max_path)
+        else:
+            rescale = None
         if cached_acts.shape[0] != per_token_labels.shape[0]:
             raise ValueError(
                 f"shard {shard}: {cached_acts.shape[0]} residues in the activation "
@@ -435,6 +455,7 @@ def analyze_concepts(
         n_features_override = acts_meta["n_latents"]
     else:
         cached_acts = None
+        rescale = None
         n_features_override = None
         # Load the normalized SAE model
         sae = load_sae(model_dir=sae_dir, model_name="ae_normalized.pt", device=device)
@@ -458,6 +479,7 @@ def analyze_concepts(
         is_sparse=is_sparse,
         cached_acts=cached_acts,
         n_features_override=n_features_override,
+        rescale=rescale,
     )
 
     # Create output directory if it doesn't exist and save results
@@ -478,6 +500,7 @@ def analyze_all_shards_in_set(
     threshold_percents: List[float] = [0, 0.15, 0.5, 0.6, 0.8],
     is_sparse: bool = True,
     acts_dir: Path | None = None,
+    normalize_features: bool = False,
 ):
     """Wrapper to scan calculate metrics across all shards in an evaluation set.
 
@@ -512,6 +535,7 @@ def analyze_all_shards_in_set(
             shard,
             is_sparse,
             acts_dir,
+            normalize_features,
         )
 
 

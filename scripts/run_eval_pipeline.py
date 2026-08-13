@@ -62,6 +62,16 @@ def main():
         ),
     )
     parser.add_argument(
+        "--normalize_features",
+        action="store_true",
+        help=(
+            "Divide activations by the per-feature rescale factor before "
+            "thresholding, so the thresholds mean what they say. Requires "
+            "<sae_dir>/feature_stats/max.npy. Every eval before 2026-08-13 ran "
+            "WITHOUT this, on the raw scale, which made the threshold sweep a no-op."
+        ),
+    )
+    parser.add_argument(
         "--is_sparse",
         action="store_true",
         default=True,
@@ -95,6 +105,7 @@ def main():
             threshold_percents=args.thresholds,
             is_sparse=args.is_sparse,
             acts_dir=Path(args.acts_dir) if args.acts_dir else None,
+            normalize_features=args.normalize_features,
         )
 
         # Step 2: Combine metrics and calculate F1
