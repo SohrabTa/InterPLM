@@ -40,11 +40,25 @@ MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
 CC_DIR="${RERUN_CC_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/final_epoch_0_step_10990182}"
 # Estimate theta on the same corpus the model was trained on, so the threshold
 # matches the activation distribution the model actually saw.
-FASTA="${RERUN_FASTA:-/workspace/data/external/uniprot/release-2019_01/uniref/uniref50/chunks_512/chunk_00.fasta}"
+FASTA="${RERUN_FASTA:-/workspace/data/uniprot/release-2019_01/uniref/uniref50/chunks_512/chunk_00.fasta}"
 OUT_DIR="${RERUN_OUT_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/jumprelu_global_10990182}"
 
 export HF_HOME="/workspace/hf_home"
 mkdir -p logs
+
+# The converter reads <crosscoder_dir>/config.yaml, but a training checkpoint is
+# saved with the name model_cfg.yaml. They are the same file: in the auxfix
+# checkpoint config.yaml is a byte-identical copy. Make the copy if it is absent.
+HOST_CC="${CKPT_DIR}${CC_DIR#/workspace/model_checkpoints}"
+if [ ! -f "${HOST_CC}/config.yaml" ]; then
+  if [ -f "${HOST_CC}/model_cfg.yaml" ]; then
+    cp "${HOST_CC}/model_cfg.yaml" "${HOST_CC}/config.yaml"
+    echo "Copied model_cfg.yaml -> config.yaml in ${HOST_CC}"
+  else
+    echo "ERROR: neither config.yaml nor model_cfg.yaml in ${HOST_CC}" >&2
+    exit 1
+  fi
+fi
 
 echo "Converting  : ${CC_DIR}"
 echo "Theta corpus: ${FASTA}"
