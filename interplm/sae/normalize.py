@@ -178,6 +178,7 @@ def normalize_sae_features(
     loader_type: Optional[str] = None,
     nested_filename: Optional[str] = None,
     acts_dir: Optional[Path] = None,
+    out_dir: Optional[Path] = None,
 ) -> None:
     """
     Calculate feature statistics and create a normalized version of the SAE model.
@@ -189,10 +190,18 @@ def normalize_sae_features(
         data_loader: Optional pre-configured ShardDataLoader instance
         loader_type: Optional loader type ("flat" or "nested") to force specific loader
         nested_filename: Optional filename for nested loader (default: "activations.pt")
+        acts_dir: Sparse crosscoder activation store to read instead of embeddings.
+        out_dir: Where to write feature_stats/max.npy and ae_normalized.pt.
+            Defaults to sae_dir, the historical behaviour. Set it to a fresh
+            directory when you must not touch an existing checkpoint's
+            normalization -- e.g. the auxfix checkpoint, whose ae_normalized.pt
+            and feature_stats/max.npy produced the hand-in numbers.
     """
-    # Setup paths
-    feat_stat_cache = sae_dir / "feature_stats"
-    norm_sae_path = sae_dir / f"ae_normalized.pt"
+    # Setup paths. The model is always read from sae_dir; the outputs go to
+    # out_dir, which defaults to sae_dir.
+    out_dir = Path(out_dir) if out_dir is not None else sae_dir
+    feat_stat_cache = out_dir / "feature_stats"
+    norm_sae_path = out_dir / f"ae_normalized.pt"
 
     # Create cache directory
     feat_stat_cache.mkdir(parents=True, exist_ok=True)
@@ -226,6 +235,9 @@ def normalize_sae_features(
 
     torch.save(sae_normalized.state_dict(), norm_sae_path)
     print(f"Normalized model saved to {norm_sae_path}")
+    print(f"Per-feature maxima saved to {feat_stat_cache / 'max.npy'}")
+    if out_dir != sae_dir:
+        print(f"(model read from {sae_dir}; that directory was not modified)")
 
 
 if __name__ == "__main__":

@@ -53,7 +53,9 @@ case "${RERUN_TARGET}" in
   diag67k)
     EVALSET="uniprotkb_modern_score45_67k"
     RUN_TAG="auxfix_scalediag"
-    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836}"
+    # With --acts_dir the eval reads only feature_stats/max.npy from this path, so
+    # point it at the diagnostic normalization, NOT at the auxfix checkpoint.
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/scalediag_normalize_2519836}"
     ;;
   *)
     echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345 or diag67k." >&2

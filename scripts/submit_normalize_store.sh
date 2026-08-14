@@ -35,10 +35,16 @@ case "${RERUN_TARGET}" in
   score345)
     EVALSET="uniprotkb_modern_score345"
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/jumprelu_global_10990182}"
+    # New checkpoint directory, created by submit_convert_jumprelu.sh, so writing
+    # the normalization into it is the normal convention.
+    OUT_DIR="${RERUN_OUT_DIR:-${SAE_DIR}}"
     ;;
   diag67k)
     EVALSET="uniprotkb_modern_score45_67k"
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836}"
+    # Write OUTSIDE the auxfix checkpoint. Its ae_normalized.pt and
+    # feature_stats/max.npy produced the hand-in numbers and must stay unchanged.
+    OUT_DIR="${RERUN_OUT_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/scalediag_normalize_2519836}"
     ;;
   *)
     echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345 or diag67k." >&2
@@ -46,17 +52,23 @@ case "${RERUN_TARGET}" in
     ;;
 esac
 
-# CAUTION: for diag67k this overwrites the auxfix checkpoint's existing
-# feature_stats/max.npy and ae_normalized.pt, which the hand-in numbers were
-# measured with. Set RERUN_SAE_DIR to a copy of that directory if you want to
-# keep the originals byte-identical.
 ACTS_DIR="/workspace/data/crosscoder_activations/${EVALSET}"
+
+# Never write over an existing normalization. The auxfix checkpoint's
+# ae_normalized.pt and feature_stats/max.npy back the hand-in numbers.
+HOST_OUT="${CKPT_DIR}${OUT_DIR#/workspace/model_checkpoints}"
+if [ -e "${HOST_OUT}/feature_stats/max.npy" ] || [ -e "${HOST_OUT}/ae_normalized.pt" ]; then
+  echo "ERROR: ${HOST_OUT} already holds a normalization. Refusing to overwrite." >&2
+  echo "Set RERUN_OUT_DIR to a fresh directory, or delete the old one deliberately." >&2
+  exit 1
+fi
 
 export PYTHONPATH="/workspace/InterPLM"
 mkdir -p logs
 
 echo "Normalize from store : ${ACTS_DIR}"
-echo "Crosscoder           : ${SAE_DIR}"
+echo "Crosscoder (read)    : ${SAE_DIR}"
+echo "Outputs (write)      : ${OUT_DIR}"
 echo "Starting on $(hostname) at $(date)"
 START_TIME=$(date +%s)
 
@@ -70,7 +82,8 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -e . && \
      uv run python -m interplm.sae.normalize \
        --sae_dir ${SAE_DIR} \
-       --acts_dir ${ACTS_DIR}"
+       --acts_dir ${ACTS_DIR} \
+       --out_dir ${OUT_DIR}"
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
