@@ -24,13 +24,23 @@
 
 set -euo pipefail
 
-PROTT5_DIR="/dss/dsshome1/08/ga25ley2/code/sparse-crosscoders-prott5"
+# Environment recipe: build the venv from InterPLM and run the prott5 script by
+# path from /workspace/scc. This is what every working prott5 job does
+# (submit_pooled.sh, submit_full_feat.sh, ...), and the reasons are not cosmetic.
+# crosscode/pyproject.toml declares `interplm = { path = "../InterPLM" }`, so
+# installing crosscode without InterPLM mounted fails with "Distribution not
+# found at: file:///workspace/InterPLM" (job 5749590). And the prott5 project
+# itself requires Python >=3.13 while these containers build a 3.12 venv, so its
+# pyproject must not be installed at all -- only its scripts are used.
+INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
+SCC_DIR="/dss/dsshome1/08/ga25ley2/code/sparse-crosscoders-prott5"
 CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
 HF_HOME_HOST="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/hf_home"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 
-MOUNTS="${PROTT5_DIR}:/workspace/sparse-crosscoders-prott5"
+MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM"
+MOUNTS="${MOUNTS},${SCC_DIR}:/workspace/scc"
 MOUNTS="${MOUNTS},${CROSSCODE_DIR}:/workspace/crosscode"
 MOUNTS="${MOUNTS},${CKPT_DIR}:/workspace/model_checkpoints"
 MOUNTS="${MOUNTS},${HF_HOME_HOST}:/workspace/hf_home"
@@ -67,12 +77,14 @@ START_TIME=$(date +%s)
 
 srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      --container-mounts="${MOUNTS}" \
-     --container-workdir="/workspace/sparse-crosscoders-prott5" \
+     --container-workdir="/workspace/InterPLM" \
      bash -c "uv venv --python 3.12 && \
      source .venv/bin/activate && \
+     uv pip install -r requirements.txt && \
      uv pip install -e /workspace/crosscode && \
      uv pip install -e . && \
-     uv run python convert_batchtopk_to_jumprelu.py \
+     uv pip install scipy pyarrow && \
+     python /workspace/scc/convert_batchtopk_to_jumprelu.py \
        --crosscoder_dir ${CC_DIR} \
        --checkpoint model.pt \
        --fasta ${FASTA} \
