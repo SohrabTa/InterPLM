@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
-#SBATCH -t 6:00:00
+#SBATCH -t 4:00:00
 #SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/encode_%j.out
 #SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/encode_%j.err
 
@@ -24,6 +24,17 @@
 #
 # Resumable: a shard whose acts.npz exists is skipped, and the writes are atomic,
 # so a walltime kill costs only the shard in flight.
+#
+# Walltime: ask for what the job needs, not for headroom. Job 5616125 (2026-04-28)
+# embedded the same 84 diag67k shards in 37m22s, and the streaming encode runs the
+# same ProtT5 forward passes -- it writes 50 MB of CSR instead of 1.8 TB, so it is
+# no slower. score345 has 3.2x the residues (62.6M against 19.8M), so about 2h.
+# The -t above covers score345. Ask for less on diag67k: in the 2026-08-14 queue a
+# 6h request was scheduled 27h later than a 2h one, because 116 of the 180 jobs
+# ahead held 2-day reservations and only short jobs backfilled into the gaps.
+#   diag67k :  RERUN_TARGET=diag67k sbatch --time=2:00:00 scripts/submit_encode.sh
+#   score345:  sbatch scripts/submit_encode.sh
+# A walltime kill stays cheap either way, because finished shards are skipped.
 
 set -euo pipefail
 
