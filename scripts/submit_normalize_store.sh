@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH -p lrz-cpu
+#SBATCH --qos=cpu
 #SBATCH -t 2:00:00
 #SBATCH --mem=64G
 #SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/normalize_store_%j.out
@@ -16,6 +17,10 @@
 # eval (--normalize_features) and collect read the first of those.
 #
 # RERUN_TARGET selects which store to read, matching submit_encode.sh.
+#
+# --qos=cpu is required, not cosmetic. Our default QOS is gpu, and submitting to
+# lrz-cpu under it fails at once with "Invalid qos specification". The cpu QOS
+# allows 2 days of walltime, 10 running jobs and 50 submitted jobs per user.
 
 set -euo pipefail
 

@@ -1,21 +1,37 @@
 #!/bin/bash
 #SBATCH -p lrz-cpu
+#SBATCH --qos=cpu
 #SBATCH -t 12:00:00
 #SBATCH --mem=96G
 #SBATCH -c 4
 #SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/eval_shard_%A_%a.out
 #SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/eval_shard_%A_%a.err
 
-# Stage 3 (from the activation store), as a Slurm ARRAY over shards.
+# Stage 3 (from the activation store), as a Slurm ARRAY of WORKERS, not of shards.
 #
-# Submit with the array range matching the shard count, e.g.
-#     RERUN_TARGET=score345 RERUN_SCALE=normalized sbatch --array=0-207%32 scripts/submit_eval_store.sh
-#     RERUN_TARGET=diag67k  RERUN_SCALE=raw        sbatch --array=0-83%32  scripts/submit_eval_store.sh
+# Submit ten workers, whatever the shard count:
+#     RERUN_TARGET=score345 RERUN_SCALE=normalized sbatch --array=0-9 scripts/submit_eval_store.sh
+#     RERUN_TARGET=diag67k  RERUN_SCALE=raw        sbatch --array=0-9 scripts/submit_eval_store.sh
+#
+# Worker i takes shards i, i+10, i+20 ... so ten workers cover 84 or 208 shards
+# with no gaps. Each worker builds the venv once and loops, which matters: the
+# container import and uv install cost minutes, and one task per shard would pay
+# that 84 or 208 times.
 #
 # Why an array (roadmap PP-02e): the single-job eval took 25 h 16 m on 84 shards
 # and would exceed the 48 h cap on 208. Shards are independent and calculate_f1
 # sums their counts. Reading the store means no SAE and no GPU, so these are CPU
-# tasks; %32 caps concurrency so the shared filesystem is not hammered.
+# tasks.
+#
+# Why ten workers and not one task per shard: the cpu QOS allows 10 running and
+# 50 submitted jobs per user, and Slurm counts array tasks individually. So
+# --array=0-83 is rejected outright (QOSMaxSubmitJobPerUserLimit), and a %32
+# throttle is a fiction because 10 is the real concurrency cap. Ten workers sit
+# exactly at the limit and need one submission. --qos=cpu is required too: our
+# default QOS is gpu, and lrz-cpu rejects it with "Invalid qos specification".
+#
+# Re-running is safe. eval_shard.py skips a shard whose output exists, so a
+# resubmit after a walltime kill picks up where the worker stopped.
 #
 # RERUN_SCALE picks what the thresholds are measured against:
 #   normalized  divide by the per-feature max first. Correct. Needs the normalize
@@ -48,11 +64,13 @@ case "${RERUN_TARGET}" in
   score345)
     EVALSET="uniprotkb_modern_score345"
     RUN_TAG="full_uniref"
+    LAST_SHARD=207
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/jumprelu_global_10990182}"
     ;;
   diag67k)
     EVALSET="uniprotkb_modern_score45_67k"
     RUN_TAG="auxfix_scalediag"
+    LAST_SHARD=83
     # With --acts_dir the eval reads only feature_stats/max.npy from this path, so
     # point it at the diagnostic normalization, NOT at the auxfix checkpoint.
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/scalediag_normalize_2519836}"
@@ -69,14 +87,17 @@ case "${RERUN_SCALE}" in
   *) echo "Unknown RERUN_SCALE '${RERUN_SCALE}'. Use normalized or raw." >&2; exit 2 ;;
 esac
 
-SHARD="${SLURM_ARRAY_TASK_ID:?submit with --array, e.g. --array=0-207%32}"
+WORKER="${SLURM_ARRAY_TASK_ID:?submit with --array, e.g. --array=0-9}"
+STRIDE="${SLURM_ARRAY_TASK_COUNT:?submit with --array, e.g. --array=0-9}"
+SHARDS=$(seq "${WORKER}" "${STRIDE}" "${LAST_SHARD}" | tr '\n' ' ')
 ACTS_DIR="/workspace/data/crosscoder_activations/${EVALSET}"
 ANNOTS="/workspace/data/eval_dataset/${EVALSET}/processed_annotations"
 OUT_ROOT="/workspace/data/crosscoder_eval/${RUN_TAG}/${RERUN_SCALE}/${EVALSET}"
 
 export PYTHONPATH="/workspace/InterPLM"
 
-echo "Eval shard ${SHARD} | target ${RERUN_TARGET} | scale ${RERUN_SCALE}"
+echo "Worker ${WORKER} of ${STRIDE} | target ${RERUN_TARGET} | scale ${RERUN_SCALE}"
+echo "Shards : ${SHARDS}"
 echo "Store  : ${ACTS_DIR}"
 echo "Output : ${OUT_ROOT}"
 echo "Starting on $(hostname) at $(date)"
@@ -90,14 +111,17 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      uv pip install -r requirements.txt && \
      uv pip install -e /workspace/crosscode && \
      uv pip install -e . && \
-     uv run scripts/eval_shard.py \
-       --sae_dir ${SAE_DIR} \
-       --acts_dir ${ACTS_DIR} \
-       --eval_data_root ${ANNOTS} \
-       --output_root ${OUT_ROOT} \
-       --shard ${SHARD} ${NORM_FLAG}"
+     for S in ${SHARDS}; do \
+       echo \"=== shard \${S} at \$(date +%H:%M:%S) ===\" && \
+       uv run scripts/eval_shard.py \
+         --sae_dir ${SAE_DIR} \
+         --acts_dir ${ACTS_DIR} \
+         --eval_data_root ${ANNOTS} \
+         --output_root ${OUT_ROOT} \
+         --shard \${S} ${NORM_FLAG} || exit 1; \
+     done"
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
-echo "Shard ${SHARD} finished at $(date)"
+echo "Worker ${WORKER} finished shards ${SHARDS} at $(date)"
 echo "Total duration: $((DURATION / 3600))h $((DURATION % 3600 / 60))m $((DURATION % 60))s"
