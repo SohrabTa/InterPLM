@@ -24,8 +24,11 @@ Example (one array task):
         --shard 17 --normalize_features
 """
 
-from __future__ import annotations
-
+# NOTE: no `from __future__ import annotations` here. tapify resolves each
+# annotation with get_type_hints against a throwaway SimpleNamespace, so under
+# PEP 563 the string "Path" has no module globals to resolve against and the
+# CLI dies with NameError before it parses a single argument. Every other
+# tapify script in this repo omits it for the same reason.
 import json
 import sys
 from pathlib import Path
