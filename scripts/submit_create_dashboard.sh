@@ -20,7 +20,7 @@ MOUNTS="${MOUNTS},${HF_HOME}:/workspace/hf_home"
 MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
 
 SAE_DIR="/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836"
-PAIRINGS="/workspace/data/crosscoder_eval/auxfix/uniprotkb_modern_score45_67k/test_counts/heldout_all_top_pairings.csv"
+PAIRINGS="/workspace/data/crosscoder_eval/auxfix/real/uniprotkb_modern_score45_67k/test_counts/heldout_all_top_pairings.csv"
 
 # Env
 export HF_HOME="/workspace/hf_home"

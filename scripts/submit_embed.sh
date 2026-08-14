@@ -8,12 +8,15 @@
 # Define Paths
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
+HF_HOME_HOST="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/hf_home"
 
 # Mounts: Host:Container
-MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${DATA_DIR}:/workspace/data"
+MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${DATA_DIR}:/workspace/data,${HF_HOME_HOST}:/workspace/hf_home"
 
 # Env
-export HF_HOME="/workspace/data/hf_home"
+# One shared HuggingFace cache at the storage root. data/hf_home was a full
+# duplicate of it (same model, same blobs) and was deleted 2026-08-13.
+export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 
 mkdir -p logs
@@ -26,8 +29,8 @@ srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
      --container-workdir="/workspace/InterPLM" \
      bash -c "uv venv --python 3.12 && uv pip install -e . && uv pip install -r requirements.txt && \
      uv run scripts/embed_annotations.py \
-     --input_dir /workspace/data/uniprotkb_modern_score45_67k/processed_annotations/ \
-    --output_dir /workspace/data/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
+     --input_dir /workspace/data/eval_dataset/uniprotkb_modern_score45_67k/processed_annotations/ \
+    --output_dir /workspace/data/eval_dataset/uniprotkb_modern_score45_67k/analysis_embeddings/prott5/layer_crosscoder \
     --embedder_type prott5 \
     --model_name Rostlab/prot_t5_xl_uniref50 \
     --batch_size 256"
