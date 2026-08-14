@@ -2,8 +2,8 @@
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
 #SBATCH -t 1:05:00
-#SBATCH -o logs/normalize_%j.out
-#SBATCH -e logs/normalize_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/normalize_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/normalize_%j.err
 
 # Define Paths
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
@@ -20,7 +20,6 @@ MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${HF_HOME}:/workspace/hf_home,${CKPT
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 
-mkdir -p logs
 
 echo "Starting Crosscoder normalization run on $(hostname) at $(date)"
 START_TIME=$(date +%s)

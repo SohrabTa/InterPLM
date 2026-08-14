@@ -2,8 +2,8 @@
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
 #SBATCH -t 6:00:00
-#SBATCH -o logs/encode_%j.out
-#SBATCH -e logs/encode_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/encode_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/encode_%j.err
 
 # Stage 1 (streaming): ProtT5 -> crosscoder -> sparse activation store.
 #
@@ -64,7 +64,6 @@ OUT_DIR="/workspace/data/crosscoder_activations/${EVALSET}"
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 
-mkdir -p logs
 
 echo "Encode target : ${RERUN_TARGET} (${EVALSET}, shards ${SHARD_RANGE})"
 echo "Crosscoder    : ${SAE_DIR}"

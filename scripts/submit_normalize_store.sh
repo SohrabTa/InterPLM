@@ -2,8 +2,8 @@
 #SBATCH -p lrz-cpu
 #SBATCH -t 2:00:00
 #SBATCH --mem=64G
-#SBATCH -o logs/normalize_store_%j.out
-#SBATCH -e logs/normalize_store_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/normalize_store_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/normalize_store_%j.err
 
 # Stage 2 (from the activation store): per-feature maxima -> ae_normalized.pt.
 #
@@ -64,7 +64,6 @@ if [ -e "${HOST_OUT}/feature_stats/max.npy" ] || [ -e "${HOST_OUT}/ae_normalized
 fi
 
 export PYTHONPATH="/workspace/InterPLM"
-mkdir -p logs
 
 echo "Normalize from store : ${ACTS_DIR}"
 echo "Crosscoder (read)    : ${SAE_DIR}"

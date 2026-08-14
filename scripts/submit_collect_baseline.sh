@@ -2,8 +2,8 @@
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
 #SBATCH -t 2:00:00
-#SBATCH -o logs/collect_activations_%j.out
-#SBATCH -e logs/collect_activations_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/collect_activations_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/collect_activations_%j.err
 
 # Define Paths
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
@@ -25,7 +25,6 @@ SAE_DIR="/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_auxfix
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 
-mkdir -p logs
 
 echo "Starting InterPLM collect activations on $(hostname) at $(date)"
 START_TIME=$(date +%s)

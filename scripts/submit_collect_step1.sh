@@ -7,8 +7,8 @@
 # 4 h leaves headroom for I/O contention with a concurrent eval job and avoids a
 # timeout (which would waste the whole scan), while backfilling sooner than 12 h.
 #SBATCH -t 04:00:00
-#SBATCH -o logs/collect_step1_%j.out
-#SBATCH -e logs/collect_step1_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/collect_step1_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/collect_step1_%j.err
 
 # LLM-autointerp Phase A only: per-protein activation binning over all 84 shards
 # of the 67k eval set, through the AuxK-fixed normalized JumpReLU crosscoder.
@@ -30,7 +30,6 @@ MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM,${HF_HOME}:/workspace/hf_home,${CKPT
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 
-mkdir -p logs
 
 echo "Starting LLM-autointerp Phase A (binning) run on $(hostname) at $(date)"
 START_TIME=$(date +%s)

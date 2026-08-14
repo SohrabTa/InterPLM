@@ -2,8 +2,8 @@
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
 #SBATCH -t 26:00:00
-#SBATCH -o logs/eval_%j.out
-#SBATCH -e logs/eval_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/eval_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/eval_%j.err
 
 # Define Paths
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
@@ -26,7 +26,6 @@ OUTPUT_ROOT="/workspace/data/crosscoder_eval/auxfix/baseline/uniprotkb_modern_sc
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 
-mkdir -p logs
 
 echo "Starting InterPLM evaluation pipeline on $(hostname) at $(date)"
 START_TIME=$(date +%s)

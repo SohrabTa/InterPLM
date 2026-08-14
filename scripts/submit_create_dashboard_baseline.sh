@@ -2,8 +2,8 @@
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
 #SBATCH -t 02:00:00
-#SBATCH -o logs/dashboard_%j.out
-#SBATCH -e logs/dashboard_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/dashboard_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/dashboard_%j.err
 
 # Define Paths
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
@@ -28,7 +28,6 @@ export PYTHONPATH="/workspace/InterPLM"
 # We set this so the dashboard cache is saved to the data dir properly, or leave default
 export INTERPLM_DATA="/workspace/data"
 
-mkdir -p logs
 
 echo "Starting InterPLM dashboard generation on $(hostname) at $(date)"
 START_TIME=$(date +%s)

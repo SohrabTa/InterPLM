@@ -2,8 +2,8 @@
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
 #SBATCH -t 2:00:00
-#SBATCH -o logs/convert_jumprelu_%j.out
-#SBATCH -e logs/convert_jumprelu_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/convert_jumprelu_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/convert_jumprelu_%j.err
 
 # Stage 0b: convert the full-UniRef50 BatchTopK crosscoder to a JumpReLU gate.
 #
@@ -44,7 +44,6 @@ FASTA="${RERUN_FASTA:-/workspace/data/external/uniprot/release-2019_01/uniref/un
 OUT_DIR="${RERUN_OUT_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/jumprelu_global_10990182}"
 
 export HF_HOME="/workspace/hf_home"
-mkdir -p logs
 
 # The converter reads <crosscoder_dir>/config.yaml, but a training checkpoint is
 # saved with the name model_cfg.yaml. They are the same file: in the auxfix

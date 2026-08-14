@@ -2,8 +2,8 @@
 #SBATCH -p lrz-hgx-h100-94x4
 #SBATCH --gres=gpu:1
 #SBATCH -t 04:00:00
-#SBATCH -o logs/collect_step1_fitness_%j.out
-#SBATCH -e logs/collect_step1_fitness_%j.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/collect_step1_fitness_%j.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/collect_step1_fitness_%j.err
 
 # LLM-autointerp Phases B-E for the 454 ProteinGym fitness-tracking features
 # (exp03/§5.5 follow-up). REUSES the cached Phase-A binning (job 5673517) via the
@@ -26,7 +26,6 @@ export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 export PYTHONUNBUFFERED=1
 
-mkdir -p logs
 echo "Starting collect_step1 B-E (454 fitness features) on $(hostname) at $(date)"
 START_TIME=$(date +%s)
 

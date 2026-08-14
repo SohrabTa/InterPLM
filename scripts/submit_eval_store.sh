@@ -3,8 +3,8 @@
 #SBATCH -t 12:00:00
 #SBATCH --mem=96G
 #SBATCH -c 4
-#SBATCH -o logs/eval_shard_%A_%a.out
-#SBATCH -e logs/eval_shard_%A_%a.err
+#SBATCH -o /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/eval_shard_%A_%a.out
+#SBATCH -e /dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/logs/interplm/eval_shard_%A_%a.err
 
 # Stage 3 (from the activation store), as a Slurm ARRAY over shards.
 #
@@ -75,7 +75,6 @@ ANNOTS="/workspace/data/eval_dataset/${EVALSET}/processed_annotations"
 OUT_ROOT="/workspace/data/crosscoder_eval/${RUN_TAG}/${RERUN_SCALE}/${EVALSET}"
 
 export PYTHONPATH="/workspace/InterPLM"
-mkdir -p logs
 
 echo "Eval shard ${SHARD} | target ${RERUN_TARGET} | scale ${RERUN_SCALE}"
 echo "Store  : ${ACTS_DIR}"
