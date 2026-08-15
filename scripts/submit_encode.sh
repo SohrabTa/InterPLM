@@ -25,16 +25,24 @@
 # Resumable: a shard whose acts.npz exists is skipped, and the writes are atomic,
 # so a walltime kill costs only the shard in flight.
 #
-# Walltime: ask for what the job needs, not for headroom. Job 5616125 (2026-04-28)
-# embedded the same 84 diag67k shards in 37m22s, and the streaming encode runs the
-# same ProtT5 forward passes -- it writes 50 MB of CSR instead of 1.8 TB, so it is
-# no slower. score345 has 3.2x the residues (62.6M against 19.8M), so about 2h.
-# The -t above covers score345. Ask for less on diag67k: in the 2026-08-14 queue a
-# 6h request was scheduled 27h later than a 2h one, because 116 of the 180 jobs
-# ahead held 2-day reservations and only short jobs backfilled into the gaps.
-#   diag67k :  RERUN_TARGET=diag67k sbatch --time=2:00:00 scripts/submit_encode.sh
-#   score345:  sbatch scripts/submit_encode.sh
-# A walltime kill stays cheap either way, because finished shards are skipped.
+# Walltime: ask for what the job needs, not for headroom. MEASURED on job 5749642
+# (2026-08-15, 84 diag67k shards, batch 64, one H100):
+#   per shard   46.9s min, 48.4s median, 69.7s max, at ~236k residues/shard
+#   shard work  69.0 min      env build + model load  ~5.5 min      total 1h14m
+# That is 4,790 residues/s. The old embed job 5616125 did the same set at 8,840
+# residues/s, so the crosscoder encode plus the CSR build and compression roughly
+# doubles the cost of the ProtT5 forward. Do not assume the store is free.
+#
+# score345 scales by residues, and its shards are bigger (~301k against ~236k),
+# so ~62s/shard x 208 = ~3.6h + build. That does NOT fit the 4h above with any
+# margin, so split it in two and run them at the same time:
+#   RERUN_SHARD_RANGE="0 103"   sbatch --time=3:00:00 scripts/submit_encode.sh
+#   RERUN_SHARD_RANGE="104 207" sbatch --time=3:00:00 scripts/submit_encode.sh
+#   diag67k                   :  RERUN_TARGET=diag67k sbatch --time=2:00:00 scripts/submit_encode.sh
+# Short jobs also start sooner: in the 2026-08-14 queue a 6h request was scheduled
+# 27h later than a 2h one, because 116 of the 180 jobs ahead held 2-day
+# reservations and only short jobs backfilled into the gaps. A walltime kill stays
+# cheap either way, because finished shards are skipped on resubmit.
 
 set -euo pipefail
 
@@ -68,6 +76,10 @@ case "${RERUN_TARGET}" in
     exit 2
     ;;
 esac
+
+# Override to split a target across concurrent jobs, e.g. RERUN_SHARD_RANGE="0 103".
+# Safe to overlap ranges: a shard whose acts.npz exists is skipped.
+SHARD_RANGE="${RERUN_SHARD_RANGE:-${SHARD_RANGE}}"
 
 BATCH_SIZE="${RERUN_BATCH_SIZE:-64}"
 OUT_DIR="/workspace/data/crosscoder_activations/${EVALSET}"
