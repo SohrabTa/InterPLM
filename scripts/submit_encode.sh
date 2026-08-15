@@ -63,7 +63,7 @@ RERUN_TARGET="${RERUN_TARGET:-score345}"
 case "${RERUN_TARGET}" in
   score345)
     EVALSET="uniprotkb_modern_score345"
-    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/jumprelu_global_10990182}"
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
     SHARD_RANGE="0 207"
     ;;
   diag67k)

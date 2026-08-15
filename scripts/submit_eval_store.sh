@@ -80,7 +80,7 @@ case "${RERUN_TARGET}" in
     EVALSET="uniprotkb_modern_score345"
     RUN_TAG="full_uniref"
     LAST_SHARD=207
-    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/jumprelu_global_10990182}"
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
     ;;
   diag67k)
     EVALSET="uniprotkb_modern_score45_67k"

@@ -46,12 +46,25 @@ MOUNTS="${MOUNTS},${CKPT_DIR}:/workspace/model_checkpoints"
 MOUNTS="${MOUNTS},${HF_HOME_HOST}:/workspace/hf_home"
 MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
 
-# The training checkpoint to convert, and the corpus theta is estimated on.
-CC_DIR="${RERUN_CC_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/final_epoch_0_step_10990182}"
-# Estimate theta on the same corpus the model was trained on, so the threshold
-# matches the activation distribution the model actually saw.
-FASTA="${RERUN_FASTA:-/workspace/data/external/uniprot/release-2019_01/uniref/uniref50/chunks_512/chunk_00.fasta}"
-OUT_DIR="${RERUN_OUT_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref_chunk4/jumprelu_global_10990182}"
+CC_DIR="${RERUN_CC_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/final_epoch_0_step_10990182}"
+
+# Which proteins theta is measured on. Use the EVALUATION proteins, the same ones
+# the downstream eval scores, because that is what the auxfix conversion did
+# (doc 05: "proteins.tsv provides the sequences", theta 3.3118 from 317k tokens).
+#
+# I got this wrong on 2026-08-15 and used the UniRef50 training sequences instead,
+# reasoning that theta should match the distribution the model was trained on.
+# That reasoning is not crazy, but it is not what we did before, and it measurably
+# changes the answer: theta 4.26197 gave 34.59 active latents per residue on the
+# training sequences and 33.04 on the actual evaluation proteins (probe 5749761),
+# against a target of 32. Consistency with the auxfix model matters more than the
+# argument, because the two crosscoders are compared to each other.
+#
+# One sequence per line, no header. Build it from the eval set's proteins.tsv:
+#   zcat proteins.tsv.gz | awk -F'\t' 'NR>1 {print $5}' > eval_sequences.txt
+# (column 5 is Sequence; check the header before trusting the index.)
+FASTA="${RERUN_FASTA:-/workspace/data/eval_dataset/uniprotkb_modern_score345/eval_sequences.txt}"
+OUT_DIR="${RERUN_OUT_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
 
 export HF_HOME="/workspace/hf_home"
 
