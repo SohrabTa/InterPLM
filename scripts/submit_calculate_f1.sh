@@ -61,16 +61,30 @@ OUT_ROOT="/workspace/data/crosscoder_eval/${RUN_TAG}/${RERUN_SCALE}/${EVALSET}"
 
 # Refuse to run on an incomplete eval: calculate_f1 sums whatever shards it finds
 # and would silently report an F1 computed on a subset.
+#
+# The expected count comes from `shard_source` in the split's metadata.json (a list
+# of the shard indices that split owns, 42 each for the 67k set). It does NOT come
+# from listing the split directory: <split>/ holds only aa_concepts_columns.txt and
+# metadata.json, and the shards live one level up in processed_annotations/shard_N.
+# Job 5750420 died in 1 second on that mistake, because under `set -euo pipefail` a
+# glob that matches nothing makes ls exit 2 and takes the whole script with it.
+# Hence the `|| true` guards below: every count here must fail soft, never abort.
 HOST_OUT="${DATA_DIR}${OUT_ROOT#/workspace/data}"
+HOST_ANNOTS="${DATA_DIR}${ANNOTS#/workspace/data}"
 for split in valid test; do
-  have=$(ls "${HOST_OUT}/${split}_counts"/shard_*_counts.npz 2>/dev/null | wc -l)
-  want=$(ls -d "${DATA_DIR}${ANNOTS#/workspace/data}/${split}"/shard_* 2>/dev/null | wc -l)
+  have=$( { find "${HOST_OUT}/${split}_counts" -maxdepth 1 -name 'shard_*_counts.npz' 2>/dev/null || true; } | wc -l | tr -d '[:space:]' )
+  want=$(python3 -c "
+import json,sys
+try:
+    print(len(json.load(open('${HOST_ANNOTS}/${split}/metadata.json'))['shard_source']))
+except Exception:
+    print(0)" 2>/dev/null || echo 0)
   if [ "${want}" -gt 0 ] && [ "${have}" -ne "${want}" ]; then
     echo "ERROR: ${split} has ${have} count files but the eval set defines ${want} shards." >&2
     echo "Finish submit_eval_store.sh before combining, or the F1 is computed on a subset." >&2
     exit 1
   fi
-  echo "${split}: ${have} shard count files"
+  echo "${split}: ${have} of ${want} shard count files"
 done
 
 export PYTHONPATH="/workspace/InterPLM"
