@@ -33,6 +33,12 @@
 # Re-running is safe. eval_shard.py skips a shard whose output exists, so a
 # resubmit after a walltime kill picks up where the worker stopped.
 #
+# The venv is shared, because all ten workers mount the same /workspace/InterPLM.
+# A worker rebuilds it only when the import check fails, so in the normal case
+# nothing writes to it and ten concurrent workers cannot race. Validate with a
+# single task (--array=0-0) after any change to requirements, so that at most one
+# worker ever builds it.
+#
 # RERUN_SCALE picks what the thresholds are measured against:
 #   normalized  divide by the per-feature max first. Correct. Needs the normalize
 #               stage to have run (submit_normalize_store.sh).
@@ -46,6 +52,15 @@
 #     python -m interplm.analysis.concepts.report_metrics --valid_path <out>/valid_counts/concept_f1_scores.csv --test_path <out>/test_counts/concept_f1_scores.csv
 
 set -euo pipefail
+
+# Mount a prebuilt squashfs instead of naming the registry image. Pulling by name
+# makes every task extract its own ~18 GB copy into node-local /run/pyxis/<jobid>,
+# and Slurm packs many array tasks onto one node: on 2026-08-15 it put 7 tasks on
+# cpu-002 and 6 on cpu-006, and 16 of 20 died with "Write failed because No space
+# left on device" while building the squashfs. A prebuilt image is mounted
+# read-only, so there is nothing to extract, no node-local space is used, and the
+# job also starts several minutes sooner.
+CONTAINER="${RERUN_CONTAINER:-/dss/dsshome1/08/ga25ley2/nvidia+pytorch+25.12-py3.sqsh}"
 
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
 CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
@@ -103,14 +118,19 @@ echo "Output : ${OUT_ROOT}"
 echo "Starting on $(hostname) at $(date)"
 START_TIME=$(date +%s)
 
-srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
+srun --container-image="${CONTAINER}" \
      --container-mounts="${MOUNTS}" \
      --container-workdir="/workspace/InterPLM" \
-     bash -c "uv venv --python 3.12 && \
+     bash -c "if .venv/bin/python -c 'import interplm, scipy, crosscode' 2>/dev/null; then \
+       echo 'venv: reusing /workspace/InterPLM/.venv'; \
+     else \
+       echo 'venv: building' && \
+       uv venv --python 3.12 && source .venv/bin/activate && \
+       uv pip install -r requirements.txt && \
+       uv pip install -e /workspace/crosscode && \
+       uv pip install -e . ; \
+     fi && \
      source .venv/bin/activate && \
-     uv pip install -r requirements.txt && \
-     uv pip install -e /workspace/crosscode && \
-     uv pip install -e . && \
      for S in ${SHARDS}; do \
        echo \"=== shard \${S} at \$(date +%H:%M:%S) ===\" && \
        uv run scripts/eval_shard.py \

@@ -13,6 +13,7 @@ use a dense implementation for the neuron activations that can be set via the is
 """
 
 import json
+import os
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
@@ -482,14 +483,22 @@ def analyze_concepts(
         rescale=rescale,
     )
 
-    # Create output directory if it doesn't exist and save results
+    # Create output directory if it doesn't exist and save results.
+    #
+    # Write to a temp file and rename, because the rename is atomic and a direct
+    # savez is not. eval_shard.py skips a shard whose counts file exists, so a
+    # walltime kill or a scancel during the write would otherwise leave a
+    # truncated file that the resume treats as finished, and calculate_f1 would
+    # sum a partial count without any sign that it did. Same reasoning as the
+    # activation store, see insights.md 2026-07-19.
     output_dir.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        output_dir / f"shard_{shard}_counts.npz",
-        tp=tp,
-        fp=fp,
-        tp_per_domain=tp_per_domain,
-    )
+    out_file = output_dir / f"shard_{shard}_counts.npz"
+    # The temp name must end in .npz: savez_compressed appends .npz to any name
+    # that lacks it, so a ".tmp" suffix would silently produce ".tmp.npz" and the
+    # rename below would fail on a missing file.
+    tmp_file = output_dir / f".shard_{shard}_counts.tmp.npz"
+    np.savez_compressed(tmp_file, tp=tp, fp=fp, tp_per_domain=tp_per_domain)
+    os.replace(tmp_file, out_file)
 
 
 def analyze_all_shards_in_set(
