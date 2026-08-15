@@ -82,7 +82,11 @@ esac
 SHARD_RANGE="${RERUN_SHARD_RANGE:-${SHARD_RANGE}}"
 
 BATCH_SIZE="${RERUN_BATCH_SIZE:-64}"
-OUT_DIR="/workspace/data/crosscoder_activations/${EVALSET}"
+# Override for probes. The resume logic skips a shard whose acts.npz exists and
+# meta.json records sae_dir and checkpoint but NOT theta, so a shard encoded
+# under one threshold would be silently kept if the checkpoint were re-converted
+# in place. Write throwaway runs somewhere else rather than into the real store.
+OUT_DIR="${RERUN_OUT_DIR:-/workspace/data/crosscoder_activations/${EVALSET}}"
 
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
