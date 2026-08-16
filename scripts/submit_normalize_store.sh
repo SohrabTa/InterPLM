@@ -24,6 +24,11 @@
 
 set -euo pipefail
 
+# Mount the prebuilt image instead of pulling by name: pulling makes each task
+# extract ~18 GB into node-local /run, which cost 16 of 20 workers on 2026-08-15
+# (see submit_eval_store.sh) and costs every job several minutes even when it fits.
+CONTAINER="${RERUN_CONTAINER:-/dss/dsshome1/08/ga25ley2/nvidia+pytorch+25.12-py3.sqsh}"
+
 INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
 CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
@@ -76,7 +81,7 @@ echo "Outputs (write)      : ${OUT_DIR}"
 echo "Starting on $(hostname) at $(date)"
 START_TIME=$(date +%s)
 
-srun --container-image="nvcr.io/nvidia/pytorch:25.12-py3" \
+srun --container-image="${CONTAINER}" \
      --container-mounts="${MOUNTS}" \
      --container-workdir="/workspace/InterPLM" \
      bash -c "uv venv --python 3.12 && \
