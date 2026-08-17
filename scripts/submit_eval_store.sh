@@ -78,20 +78,31 @@ RERUN_SCALE="${RERUN_SCALE:-normalized}"
 case "${RERUN_TARGET}" in
   score345)
     EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="${EVALSET}"
     RUN_TAG="full_uniref"
     LAST_SHARD=207
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
     ;;
   diag67k)
     EVALSET="uniprotkb_modern_score45_67k"
+    STORE_NAME="${EVALSET}"
     RUN_TAG="auxfix_scalediag"
     LAST_SHARD=83
     # With --acts_dir the eval reads only feature_stats/max.npy from this path, so
     # point it at the diagnostic normalization, NOT at the auxfix checkpoint.
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/scalediag_normalize_2519836}"
     ;;
+  fulluniref67k)
+    # Same eval set and split as diag67k, different crosscoder and store, and a
+    # RUN_TAG that keeps the counts out of the auxfix output tree.
+    EVALSET="uniprotkb_modern_score45_67k"
+    STORE_NAME="uniprotkb_modern_score45_67k_fulluniref"
+    RUN_TAG="full_uniref_on67k"
+    LAST_SHARD=83
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/normalize_67k_10990182}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345 or diag67k." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k or fulluniref67k." >&2
     exit 2
     ;;
 esac
@@ -105,7 +116,9 @@ esac
 WORKER="${SLURM_ARRAY_TASK_ID:?submit with --array, e.g. --array=0-9}"
 STRIDE="${SLURM_ARRAY_TASK_COUNT:?submit with --array, e.g. --array=0-9}"
 SHARDS=$(seq "${WORKER}" "${STRIDE}" "${LAST_SHARD}" | tr '\n' ' ')
-ACTS_DIR="/workspace/data/crosscoder_activations/${EVALSET}"
+# STORE_NAME, not EVALSET: fulluniref67k reads the 67k annotations but a store
+# written by a different crosscoder, which lives under its own name.
+ACTS_DIR="/workspace/data/crosscoder_activations/${STORE_NAME}"
 ANNOTS="/workspace/data/eval_dataset/${EVALSET}/processed_annotations"
 OUT_ROOT="/workspace/data/crosscoder_eval/${RUN_TAG}/${RERUN_SCALE}/${EVALSET}"
 

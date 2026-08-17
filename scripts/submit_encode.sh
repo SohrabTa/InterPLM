@@ -65,19 +65,39 @@ MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
 
 RERUN_TARGET="${RERUN_TARGET:-score345}"
 
+# EVALSET names the eval set whose shards and annotations are read. STORE_NAME
+# names the activation store written. They are the same for the first two targets
+# and MUST differ for fulluniref67k, which re-encodes an eval set that already has
+# a store built by a different crosscoder.
 case "${RERUN_TARGET}" in
   score345)
     EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="${EVALSET}"
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
     SHARD_RANGE="0 207"
     ;;
   diag67k)
     EVALSET="uniprotkb_modern_score45_67k"
+    STORE_NAME="${EVALSET}"
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836}"
     SHARD_RANGE="0 83"
     ;;
+  fulluniref67k)
+    # The controlled comparison: same eval set as the auxfix run (67k {4,5}, 219
+    # concepts, same split), different crosscoder. score345 changed the model AND
+    # the eval set at once, so it cannot say what the retrain alone bought.
+    #
+    # The store name MUST differ from the eval-set name here. A shard whose
+    # acts.npz exists is skipped, so writing to the default path would silently
+    # "finish" in seconds and hand back the AUXFIX activations already sitting
+    # there, labelled as this run.
+    EVALSET="uniprotkb_modern_score45_67k"
+    STORE_NAME="uniprotkb_modern_score45_67k_fulluniref"
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
+    SHARD_RANGE="0 83"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345 or diag67k." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k or fulluniref67k." >&2
     exit 2
     ;;
 esac
@@ -91,7 +111,7 @@ BATCH_SIZE="${RERUN_BATCH_SIZE:-64}"
 # meta.json records sae_dir and checkpoint but NOT theta, so a shard encoded
 # under one threshold would be silently kept if the checkpoint were re-converted
 # in place. Write throwaway runs somewhere else rather than into the real store.
-OUT_DIR="${RERUN_OUT_DIR:-/workspace/data/crosscoder_activations/${EVALSET}}"
+OUT_DIR="${RERUN_OUT_DIR:-/workspace/data/crosscoder_activations/${STORE_NAME}}"
 
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"

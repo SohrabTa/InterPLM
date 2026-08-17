@@ -44,6 +44,7 @@ RERUN_TARGET="${RERUN_TARGET:-score345}"
 case "${RERUN_TARGET}" in
   score345)
     EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="${EVALSET}"
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
     # New checkpoint directory, created by submit_convert_jumprelu.sh, so writing
     # the normalization into it is the normal convention.
@@ -51,18 +52,29 @@ case "${RERUN_TARGET}" in
     ;;
   diag67k)
     EVALSET="uniprotkb_modern_score45_67k"
+    STORE_NAME="${EVALSET}"
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/jumprelu_global_2519836}"
     # Write OUTSIDE the auxfix checkpoint. Its ae_normalized.pt and
     # feature_stats/max.npy produced the hand-in numbers and must stay unchanged.
     OUT_DIR="${RERUN_OUT_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_auxfix_2026-06-06_07-04-40/scalediag_normalize_2519836}"
     ;;
+  fulluniref67k)
+    EVALSET="uniprotkb_modern_score45_67k"
+    STORE_NAME="uniprotkb_modern_score45_67k_fulluniref"
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
+    # Separate directory: the per-feature maxima are computed over the 67k store,
+    # not the score345 one, so they are a different normalization of the same
+    # crosscoder. Writing into the checkpoint would overwrite the score345
+    # normalization the hand-in numbers came from (the guard below refuses anyway).
+    OUT_DIR="${RERUN_OUT_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/normalize_67k_10990182}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345 or diag67k." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k or fulluniref67k." >&2
     exit 2
     ;;
 esac
 
-ACTS_DIR="/workspace/data/crosscoder_activations/${EVALSET}"
+ACTS_DIR="/workspace/data/crosscoder_activations/${STORE_NAME}"
 
 # Never write over an existing normalization. The auxfix checkpoint's
 # ae_normalized.pt and feature_stats/max.npy back the hand-in numbers.
