@@ -46,6 +46,14 @@
 
 set -euo pipefail
 
+# The venv is rebuilt only when the import check fails. This is not a nicety:
+# the venv lives on the shared DSS filesystem, and job 5763181 spent its whole
+# 2 h walltime in `uv pip install` without encoding a single shard, including
+# one `Uninstalled 1 package in 29m 15s`. The three installs also thrash numpy
+# (requirements pulls 2.2.6, crosscode pulls it back to 1.26.4), and uv cannot
+# hardlink across filesystems so every file is a full copy. Same guard as
+# submit_eval_store.sh.
+
 # Mount the prebuilt image instead of pulling by name: pulling makes each task
 # extract ~18 GB into node-local /run, which cost 16 of 20 workers on 2026-08-15
 # (see submit_eval_store.sh) and costs every job several minutes even when it fits.
@@ -115,6 +123,9 @@ OUT_DIR="${RERUN_OUT_DIR:-/workspace/data/crosscoder_activations/${STORE_NAME}}"
 
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
+# uv cache and the venv sit on different filesystems, so hardlinking fails and
+# uv falls back to full copies with a warning on every install.
+export UV_LINK_MODE=copy
 
 
 echo "Encode target : ${RERUN_TARGET} (${EVALSET}, shards ${SHARD_RANGE})"
@@ -126,11 +137,16 @@ START_TIME=$(date +%s)
 srun --container-image="${CONTAINER}" \
      --container-mounts="${MOUNTS}" \
      --container-workdir="/workspace/InterPLM" \
-     bash -c "uv venv --python 3.12 && \
+     bash -c "if .venv/bin/python -c 'import interplm, scipy, crosscode' 2>/dev/null; then \
+       echo 'venv: reusing /workspace/InterPLM/.venv'; \
+     else \
+       echo 'venv: building' && \
+       uv venv --python 3.12 && source .venv/bin/activate && \
+       uv pip install -r requirements.txt && \
+       uv pip install -e /workspace/crosscode && \
+       uv pip install -e . ; \
+     fi && \
      source .venv/bin/activate && \
-     uv pip install -r requirements.txt && \
-     uv pip install -e /workspace/crosscode && \
-     uv pip install -e . && \
      uv run scripts/encode_activations.py \
        --sae_dir ${SAE_DIR} \
        --checkpoint ae.pt \
