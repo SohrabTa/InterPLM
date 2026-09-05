@@ -101,8 +101,17 @@ case "${RERUN_TARGET}" in
     LAST_SHARD=83
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/normalize_67k_10990182}"
     ;;
+  baselineuniref345)
+    # The random-init null on the preprint eval set. Its own RUN_TAG keeps the
+    # counts out of the full-UniRef50 output tree.
+    EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="uniprotkb_modern_score345_baselineuniref"
+    RUN_TAG="baseline_uniref_on345"
+    LAST_SHARD=207
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_uniref_chunk4/jumprelu_global_10990182}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k or fulluniref67k." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k or baselineuniref345." >&2
     exit 2
     ;;
 esac

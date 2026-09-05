@@ -76,8 +76,16 @@ case "${RERUN_TARGET}" in
     # normalization the hand-in numbers came from (the guard below refuses anyway).
     OUT_DIR="${RERUN_OUT_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/normalize_67k_10990182}"
     ;;
+  baselineuniref345)
+    EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="uniprotkb_modern_score345_baselineuniref"
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_uniref_chunk4/jumprelu_global_10990182}"
+    # New checkpoint directory from submit_convert_jumprelu.sh, so the
+    # normalization goes into it, as it does for score345.
+    OUT_DIR="${RERUN_OUT_DIR:-${SAE_DIR}}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k or fulluniref67k." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k or baselineuniref345." >&2
     exit 2
     ;;
 esac

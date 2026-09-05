@@ -49,7 +49,8 @@ case "${RERUN_TARGET}" in
   score345)      EVALSET="uniprotkb_modern_score345";    RUN_TAG="full_uniref" ;;
   diag67k)       EVALSET="uniprotkb_modern_score45_67k"; RUN_TAG="auxfix_scalediag" ;;
   fulluniref67k) EVALSET="uniprotkb_modern_score45_67k"; RUN_TAG="full_uniref_on67k" ;;
-  *) echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k or fulluniref67k." >&2; exit 2 ;;
+  baselineuniref345) EVALSET="uniprotkb_modern_score345"; RUN_TAG="baseline_uniref_on345" ;;
+  *) echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k or baselineuniref345." >&2; exit 2 ;;
 esac
 
 case "${RERUN_SCALE}" in

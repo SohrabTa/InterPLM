@@ -104,8 +104,23 @@ case "${RERUN_TARGET}" in
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_full_uniref50/jumprelu_global_10990182}"
     SHARD_RANGE="0 83"
     ;;
+  baselineuniref345)
+    # The matched random-init null for the preprint headline (roadmap PP-01a).
+    # Same eval set as score345, different crosscoder: the baseline trained on
+    # the full UniRef50 corpus with the ProtT5 weights shuffled. It is scored on
+    # REAL ProtT5 activations, exactly like the full model, which is what makes
+    # it a null for the concepts rather than for the input distribution.
+    #
+    # The store name MUST differ from the eval-set name, for the same reason it
+    # does for fulluniref67k: a shard whose acts.npz exists is skipped, so the
+    # default path would hand back the full-UniRef50 activations already there.
+    EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="uniprotkb_modern_score345_baselineuniref"
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_uniref_chunk4/jumprelu_global_10990182}"
+    SHARD_RANGE="0 207"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k or fulluniref67k." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k or baselineuniref345." >&2
     exit 2
     ;;
 esac
