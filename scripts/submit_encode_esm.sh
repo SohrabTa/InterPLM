@@ -27,10 +27,11 @@
 #   RERUN_SHARD_RANGE="156 207" sbatch scripts/submit_encode_esm.sh
 #
 # -c 8: the six layers are saved in parallel threads, and the compressed save is the largest CPU
-# cost (about 90 s per shard on one core, measured 2026-09-23 on the M1).
+# cost: about 95 s per shard on one core, from 257 M nonzeros in shard 0 at 1.38 s per 3.75 M
+# (measured on the M1, 2026-09-23).
 #
-# Size: about 4.1 KB per residue over the six layers (measured on 19,657 residues of shard 0),
-# thus about 257 GB for the 62.7 M residues of the eval set.
+# Size: the six stores of shard 0 take 1.2 GB (305,028 residues, M1 run of 2026-09-23), thus about
+# 250 GB for the 208 shards of the eval set.
 
 set -euo pipefail
 

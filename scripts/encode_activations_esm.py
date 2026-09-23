@@ -241,8 +241,8 @@ def encode_activations_esm(
             }
             provenances[layer] = provenance
 
-        # The compressed save costs about 90 s per shard for the six layers on one core
-        # (1.38 s per 3.75 M nonzeros, measured 2026-09-23). zlib releases the GIL while it
+        # The compressed save costs about 95 s per shard for the six layers on one core: shard 0
+        # has 257 M nonzeros, and the M1 saved 3.75 M in 1.38 s (2026-09-23). zlib releases the GIL while it
         # compresses, so one thread per layer runs the saves at the same time.
         t1 = time.time()
         with ThreadPoolExecutor(max_workers=len(todo)) as pool:
