@@ -80,6 +80,19 @@ class ShardActivationWriter:
         self._blocks.append(sparse.csr_matrix(arr))
         self._n_residues += arr.shape[0]
 
+    def add_csr(self, block: sparse.csr_matrix) -> None:
+        """Add a block that is already sparse, so no dense copy reaches the CPU.
+
+        scripts/encode_activations_esm.py uses this: it finds the nonzero entries
+        on the GPU and moves only those.
+        """
+        if block.shape[1] != self.n_latents:
+            raise ValueError(
+                f"expected {self.n_latents} latents, got {block.shape[1]}"
+            )
+        self._blocks.append(sparse.csr_matrix(block, dtype=np.float32))
+        self._n_residues += block.shape[0]
+
     def add_protein(self, protein_id: str, length: int) -> None:
         start = (
             self._boundaries[-1][1] if self._boundaries else 0

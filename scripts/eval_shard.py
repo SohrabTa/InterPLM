@@ -59,6 +59,7 @@ def eval_shard(
     thresholds: List[float] = [0, 0.15, 0.5, 0.6, 0.8],
     is_sparse: bool = True,
     skip_existing: bool = True,
+    method: str = "loop",
 ):
     """
     Args:
@@ -75,6 +76,9 @@ def eval_shard(
             which made all five thresholds identical.
         skip_existing: leave a shard alone if its counts file is already there,
             so a re-submitted array does not redo finished work.
+        method: "loop" (the original per-concept loop) or "matmul" (the same
+            counts as sparse matrix products, about 1 s per shard instead of
+            45-65 min; needs acts_dir). See calc_metrics_matmul.
     """
     if acts_dir is None and aa_embds_dir is None:
         raise ValueError("Specify --acts_dir (preferred) or --aa_embds_dir")
@@ -88,7 +92,7 @@ def eval_shard(
         return
 
     scale = "normalized" if normalize_features else "raw"
-    print(f"shard {shard} -> split '{split}', scale '{scale}', out {counts_dir}")
+    print(f"shard {shard} -> split '{split}', scale '{scale}', method '{method}', out {counts_dir}")
 
     analyze_concepts(
         sae_dir=sae_dir,
@@ -100,6 +104,7 @@ def eval_shard(
         is_sparse=is_sparse,
         acts_dir=acts_dir,
         normalize_features=normalize_features,
+        method=method,
     )
     print(f"shard {shard} done -> {out_file}")
 

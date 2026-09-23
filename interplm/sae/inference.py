@@ -53,8 +53,9 @@ def load_sae(
     with open(config_path, "r") as f:
         config_data = yaml.unsafe_load(f)
 
-    # Check for Crosscoder (flat config with n_hookpoints)
-    if "n_hookpoints" in config_data:
+    # Check for Crosscoder (flat config with n_hookpoints). An InterPLM config loads as a
+    # TrainingRunConfig object, not a dict, and `in` on it raises TypeError.
+    if isinstance(config_data, dict) and "n_hookpoints" in config_data:
         import sys
 
         # Assuming crosscode is a sibling of InterPLM

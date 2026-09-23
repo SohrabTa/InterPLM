@@ -49,6 +49,14 @@ MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
 
 RERUN_TARGET="${RERUN_TARGET:-score345}"
 
+# interplm650m needs one of the six released layers (roadmap PP-10a).
+if [ "${RERUN_TARGET}" = "interplm650m" ]; then
+  case "${RERUN_LAYER:-}" in
+    1|9|18|24|30|33) ;;
+    *) echo "RERUN_TARGET=interplm650m needs RERUN_LAYER in 1 9 18 24 30 33, got '${RERUN_LAYER:-}'." >&2; exit 2 ;;
+  esac
+fi
+
 case "${RERUN_TARGET}" in
   score345)
     EVALSET="uniprotkb_modern_score345"
@@ -84,8 +92,18 @@ case "${RERUN_TARGET}" in
     # normalization goes into it, as it does for score345.
     OUT_DIR="${RERUN_OUT_DIR:-${SAE_DIR}}"
     ;;
+  interplm650m)
+    # InterPLM's released ESM-2-650M SAE for one layer (roadmap PP-10a). The store is one
+    # layer of the six that submit_encode_esm.sh writes. The per-feature maxima go into a
+    # subdirectory, so the directory made by prepare_interplm_esm_saes.py stays a plain copy
+    # of the HF release.
+    EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="uniprotkb_modern_score345_interplm_esm2_650m/layer_${RERUN_LAYER}"
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/interplm_esm2_650m/layer_${RERUN_LAYER}}"
+    OUT_DIR="${RERUN_OUT_DIR:-${SAE_DIR}/normalize_score345}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k or baselineuniref345." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345 or interplm650m." >&2
     exit 2
     ;;
 esac

@@ -45,12 +45,21 @@ MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
 RERUN_TARGET="${RERUN_TARGET:-score345}"
 RERUN_SCALE="${RERUN_SCALE:-normalized}"
 
+# interplm650m needs one of the six released layers (roadmap PP-10a).
+if [ "${RERUN_TARGET}" = "interplm650m" ]; then
+  case "${RERUN_LAYER:-}" in
+    1|9|18|24|30|33) ;;
+    *) echo "RERUN_TARGET=interplm650m needs RERUN_LAYER in 1 9 18 24 30 33, got '${RERUN_LAYER:-}'." >&2; exit 2 ;;
+  esac
+fi
+
 case "${RERUN_TARGET}" in
   score345)      EVALSET="uniprotkb_modern_score345";    RUN_TAG="full_uniref" ;;
   diag67k)       EVALSET="uniprotkb_modern_score45_67k"; RUN_TAG="auxfix_scalediag" ;;
   fulluniref67k) EVALSET="uniprotkb_modern_score45_67k"; RUN_TAG="full_uniref_on67k" ;;
   baselineuniref345) EVALSET="uniprotkb_modern_score345"; RUN_TAG="baseline_uniref_on345" ;;
-  *) echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k or baselineuniref345." >&2; exit 2 ;;
+  interplm650m)  EVALSET="uniprotkb_modern_score345";    RUN_TAG="interplm_esm2_650m/layer_${RERUN_LAYER}" ;;
+  *) echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345 or interplm650m." >&2; exit 2 ;;
 esac
 
 case "${RERUN_SCALE}" in

@@ -140,6 +140,100 @@ def calc_metrics_sparse(
     return tp, fp, tp_per_domain
 
 
+def calc_metrics_matmul(
+    sae_feats_sparse: sparse.spmatrix,
+    per_token_labels_sparse: sparse.spmatrix,
+    threshold_percents: List[float],
+    is_aa_level_concept_list: List[bool],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Same counts as calc_metrics_sparse, as three sparse matrix products per threshold.
+
+    calc_metrics_sparse loops over every concept and, for the domain concepts,
+    over every feature column. That took 45-65 min per score-{3,4,5} shard at
+    8192 features (array 5750576). This version takes about 1 s. It gives
+    byte-identical tp, fp and tp_per_domain on every shard of the full-UniRef50
+    and random-init stores (documentation/scripts/check_matmul_counts.py).
+
+    With B the binarized features (residues x features) and L the labels
+    (residues x concepts):
+        tp            = (L > 0)^T B
+        fp            = colsum(B) - (L != 0)^T B
+        tp_per_domain = the number of distinct nonzero label values of a concept
+                        among the residues where the feature fires, which is what
+                        count_unique_nonzero_sparse counts. domain_matrix has one
+                        row for each (concept, label value) pair, so
+                        domain_matrix B > 0 marks the domain instances that a
+                        feature touches, and group_matrix sums those rows for each
+                        concept. AA-level concepts stay 0, as in the loop.
+    """
+    _, n_features = sae_feats_sparse.shape
+    n_residues, n_concepts = per_token_labels_sparse.shape
+    n_thresholds = len(threshold_percents)
+
+    tp = np.zeros((n_concepts, n_features, n_thresholds))
+    fp = np.zeros((n_concepts, n_features, n_thresholds))
+    tp_per_domain = np.zeros((n_concepts, n_features, n_thresholds))
+
+    sae_feats_sparse = sparse.csr_matrix(sae_feats_sparse)
+    labels = sparse.csc_matrix(per_token_labels_sparse)
+    labels_pos_t = (labels > 0).astype(np.int64).T.tocsr()
+    labels_nonzero_t = (labels != 0).astype(np.int64).T.tocsr()
+
+    # One row of M for each distinct nonzero label value of each domain concept.
+    m_rows, m_cols, groups = [], [], []
+    n_domain_rows = 0
+    for concept_idx in range(n_concepts):
+        if is_aa_level_concept_list[concept_idx]:
+            continue
+        start, end = labels.indptr[concept_idx], labels.indptr[concept_idx + 1]
+        residues = labels.indices[start:end]
+        values = labels.data[start:end]
+        keep = values != 0
+        residues, values = residues[keep], values[keep]
+        if len(residues) == 0:
+            continue
+        _, domain_idx = np.unique(values, return_inverse=True)
+        n_values = int(domain_idx.max()) + 1
+        m_rows.append(domain_idx + n_domain_rows)
+        m_cols.append(residues)
+        groups.append(np.full(n_values, concept_idx))
+        n_domain_rows += n_values
+
+    if n_domain_rows > 0:
+        m_rows = np.concatenate(m_rows)
+        domain_matrix = sparse.csr_matrix(
+            (np.ones(len(m_rows), dtype=np.int64), (m_rows, np.concatenate(m_cols))),
+            shape=(n_domain_rows, n_residues),
+        )
+        group_matrix = sparse.csr_matrix(
+            (
+                np.ones(n_domain_rows, dtype=np.int64),
+                (np.concatenate(groups), np.arange(n_domain_rows)),
+            ),
+            shape=(n_concepts, n_domain_rows),
+        )
+
+    for threshold_idx, threshold in enumerate(threshold_percents):
+        # Binarize features based on threshold, exactly as calc_metrics_sparse does
+        sae_feats_binarized = sae_feats_sparse.copy()
+        sae_feats_binarized.data = (sae_feats_binarized.data > threshold).astype(np.int64)
+        sae_feats_binarized.eliminate_zeros()
+
+        tp[:, :, threshold_idx] = (labels_pos_t @ sae_feats_binarized).toarray()
+        fires = np.asarray(sae_feats_binarized.sum(axis=0)).ravel()
+        fp[:, :, threshold_idx] = (
+            fires[None, :] - (labels_nonzero_t @ sae_feats_binarized).toarray()
+        )
+
+        if n_domain_rows > 0:
+            touched = domain_matrix @ sae_feats_binarized
+            touched.data = (touched.data > 0).astype(np.int64)
+            tp_per_domain[:, :, threshold_idx] = (group_matrix @ touched).toarray()
+
+    return tp, fp, tp_per_domain
+
+
 def count_unique_nonzero_dense(matrix: torch.Tensor) -> List[int]:
     """
     Count unique non-zero values in each column of a dense matrix.
@@ -246,6 +340,7 @@ def process_shard(
     cached_acts: Optional[sparse.csr_matrix] = None,
     n_features_override: Optional[int] = None,
     rescale: Optional[np.ndarray] = None,
+    method: str = "loop",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Process a shard of data by splitting it into manageable chunks for feature calculation.
@@ -270,10 +365,26 @@ def process_shard(
             scale the thresholds were written for. When None the raw scale is
             used, which is what every eval before 2026-08-13 did (a bug -- see
             documentation/experiments/02, "The eval read raw activations").
+        method: "loop" runs calc_metrics_sparse over feature chunks, the original
+            code. "matmul" runs calc_metrics_matmul over all features at once. It
+            gives the same counts and needs cached_acts.
 
     Returns:
         Tuple of arrays (tp, fp, tp_per_domain) containing calculated metrics
     """
+    if method == "matmul":
+        if cached_acts is None:
+            raise ValueError("method='matmul' reads the activation store; pass cached_acts")
+        print(f"Calculating over {cached_acts.shape[1]} features with matrix products")
+        return calc_metrics_matmul(
+            feature_subset(cached_acts, None, rescale=rescale),
+            sparse.csr_matrix(per_token_labels),
+            threshold_percents,
+            is_aa_concept_list,
+        )
+    if method != "loop":
+        raise ValueError(f"Unknown method '{method}'. Use 'loop' or 'matmul'.")
+
     # Extract embeddings tensor if it's in dict format
     if isinstance(aa_embeddings, dict) and 'embeddings' in aa_embeddings:
         aa_acts = aa_embeddings['embeddings']
@@ -364,6 +475,7 @@ def analyze_concepts(
     is_sparse: bool = True,
     acts_dir: Path | None = None,
     normalize_features: bool = False,
+    method: str = "loop",
 ):
     """
     Analyzes concepts in protein sequences using a Sparse Autoencoder (SAE) model.
@@ -376,6 +488,8 @@ def analyze_concepts(
         threshold_percents (List[float], optional): List of threshold values for concept detection.
         shard (int | None): Specific shard number to process. Must exist in evaluation set.
         is_sparse (bool, optional): Whether to use sparse matrix operations.
+        method (str, optional): "loop" (the original code) or "matmul" (the same
+            counts as matrix products; needs acts_dir). See process_shard.
 
     Returns:
         None: Results are saved to disk as NPZ file with following arrays:
@@ -481,6 +595,7 @@ def analyze_concepts(
         cached_acts=cached_acts,
         n_features_override=n_features_override,
         rescale=rescale,
+        method=method,
     )
 
     # Create output directory if it doesn't exist and save results.

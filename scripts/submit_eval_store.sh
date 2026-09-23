@@ -75,6 +75,29 @@ MOUNTS="${MOUNTS},${DATA_DIR}:/workspace/data"
 RERUN_TARGET="${RERUN_TARGET:-score345}"
 RERUN_SCALE="${RERUN_SCALE:-normalized}"
 
+# interplm650m needs one of the six released layers (roadmap PP-10a).
+if [ "${RERUN_TARGET}" = "interplm650m" ]; then
+  case "${RERUN_LAYER:-}" in
+    1|9|18|24|30|33) ;;
+    *) echo "RERUN_TARGET=interplm650m needs RERUN_LAYER in 1 9 18 24 30 33, got '${RERUN_LAYER:-}'." >&2; exit 2 ;;
+  esac
+fi
+
+# RERUN_METHOD picks how the per-shard counts are computed:
+#   loop    calc_metrics_sparse, the original code. 45-65 min per score345 shard at 8192 features.
+#   matmul  calc_metrics_matmul, the same counts as sparse matrix products, about 1 s per shard.
+#           Byte-identical on all 416 shards of the full-UniRef50 and random-init stores
+#           (documentation/scripts/check_matmul_counts.py, 2026-09-23).
+# interplm650m defaults to matmul. The loop would need about six days of the cpu QOS for the six
+# layers at 10,240 features.
+METHOD_DEFAULT="loop"
+[ "${RERUN_TARGET}" = "interplm650m" ] && METHOD_DEFAULT="matmul"
+RERUN_METHOD="${RERUN_METHOD:-${METHOD_DEFAULT}}"
+case "${RERUN_METHOD}" in
+  loop|matmul) ;;
+  *) echo "Unknown RERUN_METHOD '${RERUN_METHOD}'. Use loop or matmul." >&2; exit 2 ;;
+esac
+
 case "${RERUN_TARGET}" in
   score345)
     EVALSET="uniprotkb_modern_score345"
@@ -110,8 +133,18 @@ case "${RERUN_TARGET}" in
     LAST_SHARD=207
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_uniref_chunk4/jumprelu_global_10990182}"
     ;;
+  interplm650m)
+    # InterPLM's released ESM-2-650M SAE for one layer (roadmap PP-10a). Each layer has its own
+    # store, normalization and RUN_TAG, so the six layers never share an output tree. With the
+    # matmul method one worker covers all 208 shards in minutes: --array=0-0 is enough.
+    EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="uniprotkb_modern_score345_interplm_esm2_650m/layer_${RERUN_LAYER}"
+    RUN_TAG="interplm_esm2_650m/layer_${RERUN_LAYER}"
+    LAST_SHARD=207
+    SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/interplm_esm2_650m/layer_${RERUN_LAYER}/normalize_score345}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k or baselineuniref345." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345 or interplm650m." >&2
     exit 2
     ;;
 esac
@@ -133,7 +166,7 @@ OUT_ROOT="/workspace/data/crosscoder_eval/${RUN_TAG}/${RERUN_SCALE}/${EVALSET}"
 
 export PYTHONPATH="/workspace/InterPLM"
 
-echo "Worker ${WORKER} of ${STRIDE} | target ${RERUN_TARGET} | scale ${RERUN_SCALE}"
+echo "Worker ${WORKER} of ${STRIDE} | target ${RERUN_TARGET} ${RERUN_LAYER:-} | scale ${RERUN_SCALE} | method ${RERUN_METHOD}"
 echo "Shards : ${SHARDS}"
 echo "Store  : ${ACTS_DIR}"
 echo "Output : ${OUT_ROOT}"
@@ -160,7 +193,7 @@ srun --container-image="${CONTAINER}" \
          --acts_dir ${ACTS_DIR} \
          --eval_data_root ${ANNOTS} \
          --output_root ${OUT_ROOT} \
-         --shard \${S} ${NORM_FLAG} || exit 1; \
+         --shard \${S} --method ${RERUN_METHOD} ${NORM_FLAG} || exit 1; \
      done"
 
 END_TIME=$(date +%s)
