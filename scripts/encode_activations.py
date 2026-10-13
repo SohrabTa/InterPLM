@@ -37,6 +37,7 @@ Example:
 # PEP 563 the string "Path" has no module globals to resolve against and the
 # CLI dies with NameError before it parses a single argument. Every other
 # tapify script in this repo omits it for the same reason.
+import os
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -50,6 +51,31 @@ from interplm.sae.inference import load_sae
 from interplm.utils import get_device
 
 DTYPES = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
+TF32_ENV_VARS = ("TORCH_ALLOW_TF32_CUBLAS_OVERRIDE", "NVIDIA_TF32_OVERRIDE")
+
+
+def _print_tf32_state(label: str) -> None:
+    print(
+        f"TF32 {label}: cuda.matmul.allow_tf32={torch.backends.cuda.matmul.allow_tf32} "
+        f"cudnn.allow_tf32={torch.backends.cudnn.allow_tf32} "
+        f"float32_matmul_precision={torch.get_float32_matmul_precision()}"
+    )
+
+
+def _disable_tf32() -> None:
+    """Make every fp32 matmul and convolution full fp32, for ProtT5 and the crosscoder.
+
+    The NGC PyTorch image sets TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1, which makes the default
+    float32 matmul precision "high" (TF32). Roadmap PP-02i.
+    """
+    print(f"torch {torch.__version__}")
+    for name in TF32_ENV_VARS:
+        print(f"env {name}={os.environ.get(name, '<unset>')}")
+    _print_tf32_state("before")
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.set_float32_matmul_precision("highest")
+    _print_tf32_state("after ")
 
 
 def encode_activations(
@@ -63,6 +89,7 @@ def encode_activations(
     batch_size: int = 32,
     dtype: str = "float32",
     overwrite: bool = False,
+    disable_tf32: bool = False,
 ):
     """
     Args:
@@ -78,6 +105,10 @@ def encode_activations(
         dtype: ProtT5 precision. float32 matches the crosscoder's training
             harvest and every existing eval artifact; see insights.md 2026-07-04.
         overwrite: re-encode shards that already have a complete acts.npz.
+        disable_tf32: run all fp32 matmuls without TF32, and log the TF32
+            settings before and after the change. Off by default, which keeps
+            the settings of the container (TF32 on in the NGC image). Write
+            such a run to its own output_dir.
     """
     if shards is not None and shard_range is not None:
         raise ValueError("Cannot specify both shards and shard_range")
@@ -97,6 +128,8 @@ def encode_activations(
     print(f"Crosscoder  : {sae_dir}/{checkpoint}")
     print(f"Batch size  : {batch_size}")
     print(f"Shards      : {len(shards)} ({shards[0]}..{shards[-1]})")
+    if disable_tf32:
+        _disable_tf32()
 
     sae = load_sae(model_dir=sae_dir, model_name=checkpoint, device=device)
     embedder = ProtT5CrosscoderEmbedder(
@@ -110,6 +143,8 @@ def encode_activations(
         "plm_dtype": dtype,
         "batch_size": batch_size,
     }
+    if disable_tf32:
+        provenance["tf32"] = "disabled"
 
     for shard in shards:
         out = shard_dir(output_dir, shard)

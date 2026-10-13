@@ -136,6 +136,21 @@ BATCH_SIZE="${RERUN_BATCH_SIZE:-64}"
 # in place. Write throwaway runs somewhere else rather than into the real store.
 OUT_DIR="${RERUN_OUT_DIR:-/workspace/data/crosscoder_activations/${STORE_NAME}}"
 
+# RERUN_TF32_OFF=1 runs every fp32 matmul without TF32 (roadmap PP-02i). The image sets
+# TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1, so the default is TF32 on. A TF32-off run must write to
+# its own RERUN_OUT_DIR: in the real store each shard is already there and would be skipped.
+#   RERUN_TF32_OFF=1 RERUN_SHARD_RANGE="0 0" \
+#   RERUN_OUT_DIR=/workspace/data/crosscoder_activations/pp02i_tf32off_score345 \
+#   sbatch --time=0:30:00 scripts/submit_encode.sh
+TF32_ARG=""
+if [ "${RERUN_TF32_OFF:-0}" = "1" ]; then
+  if [ -z "${RERUN_OUT_DIR:-}" ]; then
+    echo "RERUN_TF32_OFF=1 needs RERUN_OUT_DIR, so the run cannot write into the real store." >&2
+    exit 2
+  fi
+  TF32_ARG="--disable_tf32"
+fi
+
 export HF_HOME="/workspace/hf_home"
 export PYTHONPATH="/workspace/InterPLM"
 # uv cache and the venv sit on different filesystems, so hardlinking fails and
@@ -169,7 +184,7 @@ srun --container-image="${CONTAINER}" \
        --output_dir ${OUT_DIR} \
        --shard_range ${SHARD_RANGE} \
        --batch_size ${BATCH_SIZE} \
-       --dtype float32"
+       --dtype float32 ${TF32_ARG}"
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
