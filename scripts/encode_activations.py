@@ -19,10 +19,18 @@ Batching note: sequences are fed in shard order in fixed-size batches with
 `padding="longest"` within each batch, exactly as `embed_annotations.py` does, so
 a given `--batch_size` reproduces that path's tokenization and padding.
 
+Several dictionaries from one ProtT5 pass (roadmap PP-06a): pass --extra_sae_dirs and
+--extra_output_dirs. Each dictionary writes its own store. A dictionary whose config.yaml has
+`layer: L` (a one-layer SAE, written by convert_batchtopk_to_jumprelu.py --layer) reads only the
+hookpoint encoder.blocks.L, that is index L-1 of the 24 layers. A dictionary without `layer` reads
+all 24 layers, as before. The checkpoints have the training normalization folded into their weights,
+so each dictionary reads the raw ProtT5 activations. Without the extra options, the script does
+what it did before.
+
 Reads:
     <metadata_dir>/shard_<i>/protein_data.tsv   (Entry, Sequence, Length)
 Writes:
-    <output_dir>/shard_<i>/{acts.npz, meta.json}
+    <output_dir>/shard_<i>/{acts.npz, meta.json}, and the same for each extra output dir
 
 Example:
     python scripts/encode_activations.py \
@@ -44,6 +52,7 @@ from typing import List, Optional
 
 import pandas as pd
 import torch
+import yaml
 
 from interplm.analysis.activation_store import ShardActivationWriter, shard_dir
 from interplm.embedders.prott5 import ProtT5CrosscoderEmbedder
@@ -78,6 +87,26 @@ def _disable_tf32() -> None:
     _print_tf32_state("after ")
 
 
+def _load_dictionary(sae_dir: Path, checkpoint: str, device: str, n_layers: int):
+    """Load one dictionary and the slice of the 24 ProtT5 layers that it reads.
+
+    Returns (dictionary, layer). layer is None for a dictionary that reads all layers, else the
+    1-based hookpoint number from `layer` in its config.yaml.
+    """
+    config = yaml.safe_load((Path(sae_dir) / "config.yaml").read_text())
+    layer = config.get("layer")
+    sae = load_sae(model_dir=sae_dir, model_name=checkpoint, device=device)
+    n_hookpoints = sae.crosscoder.n_hookpoints
+    expected = n_layers if layer is None else 1
+    if n_hookpoints != expected:
+        raise ValueError(
+            f"{sae_dir}: n_hookpoints {n_hookpoints} but config layer={layer} needs {expected}"
+        )
+    if layer is not None and not 1 <= layer <= n_layers:
+        raise ValueError(f"{sae_dir}: layer {layer} is not in 1..{n_layers}")
+    return sae, layer
+
+
 def encode_activations(
     sae_dir: Path,
     metadata_dir: Path,
@@ -90,6 +119,8 @@ def encode_activations(
     dtype: str = "float32",
     overwrite: bool = False,
     disable_tf32: bool = False,
+    extra_sae_dirs: Optional[List[Path]] = None,
+    extra_output_dirs: Optional[List[Path]] = None,
 ):
     """
     Args:
@@ -109,6 +140,10 @@ def encode_activations(
             settings before and after the change. Off by default, which keeps
             the settings of the container (TF32 on in the NGC image). Write
             such a run to its own output_dir.
+        extra_sae_dirs: more dictionaries to encode from the same ProtT5 pass,
+            each with the same checkpoint name. See the module docstring for
+            the layer slice.
+        extra_output_dirs: one store dir for each extra_sae_dirs entry, in order.
     """
     if shards is not None and shard_range is not None:
         raise ValueError("Cannot specify both shards and shard_range")
@@ -118,37 +153,54 @@ def encode_activations(
         raise ValueError("Specify --shards or --shard_range")
     if dtype not in DTYPES:
         raise ValueError(f"dtype must be one of {sorted(DTYPES)}")
+    extra_sae_dirs = extra_sae_dirs or []
+    extra_output_dirs = extra_output_dirs or []
+    if len(extra_sae_dirs) != len(extra_output_dirs):
+        raise ValueError("extra_sae_dirs and extra_output_dirs need the same length")
+    sae_dirs = [Path(sae_dir), *map(Path, extra_sae_dirs)]
+    output_dirs = [Path(output_dir), *map(Path, extra_output_dirs)]
+    if len(set(output_dirs)) != len(output_dirs):
+        raise ValueError("each dictionary needs its own output dir")
 
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    for out_dir in output_dirs:
+        out_dir.mkdir(parents=True, exist_ok=True)
     device = get_device()
 
     print(f"Device      : {device}")
     print(f"ProtT5 dtype: {dtype}")
-    print(f"Crosscoder  : {sae_dir}/{checkpoint}")
+    for d, o in zip(sae_dirs, output_dirs):
+        print(f"Crosscoder  : {d}/{checkpoint} -> {o}")
     print(f"Batch size  : {batch_size}")
     print(f"Shards      : {len(shards)} ({shards[0]}..{shards[-1]})")
     if disable_tf32:
         _disable_tf32()
 
-    sae = load_sae(model_dir=sae_dir, model_name=checkpoint, device=device)
     embedder = ProtT5CrosscoderEmbedder(
         model_name=model_name, device=device, dtype=DTYPES[dtype]
     )
-
-    provenance = {
-        "sae_dir": str(sae_dir),
-        "checkpoint": checkpoint,
-        "plm": model_name,
-        "plm_dtype": dtype,
-        "batch_size": batch_size,
-    }
-    if disable_tf32:
-        provenance["tf32"] = "disabled"
+    dictionaries = []
+    for d, o in zip(sae_dirs, output_dirs):
+        sae, layer = _load_dictionary(d, checkpoint, device, embedder.num_hookpoints)
+        provenance = {
+            "sae_dir": str(d),
+            "checkpoint": checkpoint,
+            "plm": model_name,
+            "plm_dtype": dtype,
+            "batch_size": batch_size,
+        }
+        if layer is not None:
+            provenance["layer"] = layer
+        if disable_tf32:
+            provenance["tf32"] = "disabled"
+        dictionaries.append((sae, layer, o, provenance))
 
     for shard in shards:
-        out = shard_dir(output_dir, shard)
-        if (out / "acts.npz").exists() and not overwrite:
+        pending = [
+            entry
+            for entry in dictionaries
+            if overwrite or not (shard_dir(entry[2], shard) / "acts.npz").exists()
+        ]
+        if not pending:
             print(f"shard {shard}: already encoded, skipping")
             continue
 
@@ -156,29 +208,37 @@ def encode_activations(
         sequences = df["Sequence"].tolist()
         entries = df["Entry"].tolist()
 
-        writer = ShardActivationWriter(n_latents=sae.dict_size)
-        for entry, seq in zip(entries, sequences):
-            writer.add_protein(entry, len(seq))
+        writers = []
+        for sae, _, _, _ in pending:
+            writer = ShardActivationWriter(n_latents=sae.dict_size)
+            for entry, seq in zip(entries, sequences):
+                writer.add_protein(entry, len(seq))
+            writers.append(writer)
 
         t0 = time.time()
         for i in range(0, len(sequences), batch_size):
             batch = sequences[i : i + batch_size]
             # Same call embed_annotations.py makes, one batch at a time, so the
             # padding and tokenization match that path exactly.
-            embds = embedder.extract_embeddings(batch, batch_size=batch_size)
-            with torch.no_grad():
-                latents = sae.encode(embds.to(device), normalize_features=False)
-            writer.add(latents)
-            del embds, latents
+            embds = embedder.extract_embeddings(batch, batch_size=batch_size).to(device)
+            for (sae, layer, _, _), writer in zip(pending, writers):
+                x = embds if layer is None else embds[:, :, layer - 1 : layer, :]
+                with torch.no_grad():
+                    latents = sae.encode(x, normalize_features=False)
+                writer.add(latents)
+                del latents
+            del embds
 
-        meta = writer.finalize(out, provenance)
         elapsed = time.time() - t0
-        print(
-            f"shard {shard}: {len(sequences)} proteins, {meta['n_residues']:,} residues, "
-            f"mean L0 {meta['mean_l0']:.2f}, nnz {meta['nnz']:,}, {elapsed:.1f}s"
-        )
+        for (_, _, out_dir, provenance), writer in zip(pending, writers):
+            meta = writer.finalize(shard_dir(out_dir, shard), provenance)
+            print(
+                f"shard {shard} -> {out_dir}: {len(sequences)} proteins, "
+                f"{meta['n_residues']:,} residues, mean L0 {meta['mean_l0']:.2f}, "
+                f"nnz {meta['nnz']:,}, {elapsed:.1f}s"
+            )
 
-    print(f"\nDone. Activation store at {output_dir}")
+    print(f"\nDone. Activation stores at {[str(o) for o in output_dirs]}")
 
 
 if __name__ == "__main__":

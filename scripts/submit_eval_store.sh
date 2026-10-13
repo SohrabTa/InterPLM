@@ -62,8 +62,8 @@ set -euo pipefail
 # job also starts several minutes sooner.
 CONTAINER="${RERUN_CONTAINER:-/dss/dsshome1/08/ga25ley2/nvidia+pytorch+25.12-py3.sqsh}"
 
-INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
-CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
+INTERPLM_DIR="${RERUN_INTERPLM_DIR:-/dss/dsshome1/08/ga25ley2/code/InterPLM}"
+CROSSCODE_DIR="${RERUN_CROSSCODE_DIR:-/dss/dsshome1/08/ga25ley2/code/crosscode}"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 
@@ -92,6 +92,7 @@ fi
 # layers at 10,240 features.
 METHOD_DEFAULT="loop"
 [ "${RERUN_TARGET}" = "interplm650m" ] && METHOD_DEFAULT="matmul"
+[ "${RERUN_TARGET}" = "pp06a" ] && METHOD_DEFAULT="matmul"
 RERUN_METHOD="${RERUN_METHOD:-${METHOD_DEFAULT}}"
 case "${RERUN_METHOD}" in
   loop|matmul) ;;
@@ -143,8 +144,19 @@ case "${RERUN_TARGET}" in
     LAST_SHARD=207
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/interplm_esm2_650m/layer_${RERUN_LAYER}/normalize_score345}"
     ;;
+  pp06a)
+    # Roadmap PP-06a: one dictionary of scripts/pp06a_dictionaries.sh, named by RERUN_DICT.
+    # Own store, normalization and RUN_TAG for each dictionary. matmul: --array=0-0 is enough.
+    source "${INTERPLM_DIR}/scripts/pp06a_dictionaries.sh"
+    pp06a_check_dict
+    EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="$(pp06a_store "${RERUN_DICT}")"
+    RUN_TAG="$(pp06a_run_tag "${RERUN_DICT}")"
+    LAST_SHARD=207
+    SAE_DIR="${RERUN_SAE_DIR:-$(pp06a_ckpt "${RERUN_DICT}")}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345 or interplm650m." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345, interplm650m or pp06a." >&2
     exit 2
     ;;
 esac

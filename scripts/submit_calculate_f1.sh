@@ -34,8 +34,8 @@ set -euo pipefail
 # task extract ~18 GB into node-local /run and that filled the node on 2026-08-15.
 CONTAINER="${RERUN_CONTAINER:-/dss/dsshome1/08/ga25ley2/nvidia+pytorch+25.12-py3.sqsh}"
 
-INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
-CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
+INTERPLM_DIR="${RERUN_INTERPLM_DIR:-/dss/dsshome1/08/ga25ley2/code/InterPLM}"
+CROSSCODE_DIR="${RERUN_CROSSCODE_DIR:-/dss/dsshome1/08/ga25ley2/code/crosscode}"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 
 MOUNTS="${INTERPLM_DIR}:/workspace/InterPLM"
@@ -59,7 +59,11 @@ case "${RERUN_TARGET}" in
   fulluniref67k) EVALSET="uniprotkb_modern_score45_67k"; RUN_TAG="full_uniref_on67k" ;;
   baselineuniref345) EVALSET="uniprotkb_modern_score345"; RUN_TAG="baseline_uniref_on345" ;;
   interplm650m)  EVALSET="uniprotkb_modern_score345";    RUN_TAG="interplm_esm2_650m/layer_${RERUN_LAYER}" ;;
-  *) echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345 or interplm650m." >&2; exit 2 ;;
+  pp06a)
+    source "${INTERPLM_DIR}/scripts/pp06a_dictionaries.sh"
+    pp06a_check_dict
+    EVALSET="uniprotkb_modern_score345"; RUN_TAG="$(pp06a_run_tag "${RERUN_DICT}")" ;;
+  *) echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345, interplm650m or pp06a." >&2; exit 2 ;;
 esac
 
 case "${RERUN_SCALE}" in

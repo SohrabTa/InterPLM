@@ -59,8 +59,8 @@ set -euo pipefail
 # (see submit_eval_store.sh) and costs every job several minutes even when it fits.
 CONTAINER="${RERUN_CONTAINER:-/dss/dsshome1/08/ga25ley2/nvidia+pytorch+25.12-py3.sqsh}"
 
-INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
-CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
+INTERPLM_DIR="${RERUN_INTERPLM_DIR:-/dss/dsshome1/08/ga25ley2/code/InterPLM}"
+CROSSCODE_DIR="${RERUN_CROSSCODE_DIR:-/dss/dsshome1/08/ga25ley2/code/crosscode}"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
 HF_HOME_HOST="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/hf_home"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
@@ -119,8 +119,25 @@ case "${RERUN_TARGET}" in
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/crosscoder_l8192_k32_bs512_baseline_uniref_chunk4/jumprelu_global_10990182}"
     SHARD_RANGE="0 207"
     ;;
+  pp06a)
+    # Roadmap PP-06a: the chunk-0 crosscoder and the six per-layer SAEs from one ProtT5 pass.
+    # Each dictionary writes its own store (scripts/pp06a_dictionaries.sh has the paths).
+    source "${INTERPLM_DIR}/scripts/pp06a_dictionaries.sh"
+    EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="$(pp06a_store cc_chunk0)"
+    SAE_DIR="$(pp06a_ckpt cc_chunk0)"
+    SHARD_RANGE="0 207"
+    EXTRA_SAE_DIRS=""
+    EXTRA_OUT_DIRS=""
+    for d in ${PP06A_DICTS}; do
+      [ "${d}" = "cc_chunk0" ] && continue
+      EXTRA_SAE_DIRS="${EXTRA_SAE_DIRS} $(pp06a_ckpt "${d}")"
+      EXTRA_OUT_DIRS="${EXTRA_OUT_DIRS} /workspace/data/crosscoder_activations/$(pp06a_store "${d}")"
+    done
+    EXTRA_ARGS="--extra_sae_dirs${EXTRA_SAE_DIRS} --extra_output_dirs${EXTRA_OUT_DIRS}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k or baselineuniref345." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345 or pp06a." >&2
     exit 2
     ;;
 esac
@@ -184,7 +201,7 @@ srun --container-image="${CONTAINER}" \
        --output_dir ${OUT_DIR} \
        --shard_range ${SHARD_RANGE} \
        --batch_size ${BATCH_SIZE} \
-       --dtype float32 ${TF32_ARG}"
+       --dtype float32 ${TF32_ARG} ${EXTRA_ARGS:-}"
 
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))

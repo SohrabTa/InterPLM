@@ -37,8 +37,8 @@ set -euo pipefail
 # (see submit_eval_store.sh) and costs every job several minutes even when it fits.
 CONTAINER="${RERUN_CONTAINER:-/dss/dsshome1/08/ga25ley2/nvidia+pytorch+25.12-py3.sqsh}"
 
-INTERPLM_DIR="/dss/dsshome1/08/ga25ley2/code/InterPLM"
-CROSSCODE_DIR="/dss/dsshome1/08/ga25ley2/code/crosscode"
+INTERPLM_DIR="${RERUN_INTERPLM_DIR:-/dss/dsshome1/08/ga25ley2/code/InterPLM}"
+CROSSCODE_DIR="${RERUN_CROSSCODE_DIR:-/dss/dsshome1/08/ga25ley2/code/crosscode}"
 CKPT_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/model_checkpoints"
 DATA_DIR="/dss/dssfs02/lwp-dss-0001/pn67na/pn67na-dss-0000/ga25ley2/data"
 
@@ -102,8 +102,18 @@ case "${RERUN_TARGET}" in
     SAE_DIR="${RERUN_SAE_DIR:-/workspace/model_checkpoints/interplm_esm2_650m/layer_${RERUN_LAYER}}"
     OUT_DIR="${RERUN_OUT_DIR:-${SAE_DIR}/normalize_score345}"
     ;;
+  pp06a)
+    # Roadmap PP-06a: one dictionary of scripts/pp06a_dictionaries.sh, named by RERUN_DICT.
+    # Its JumpReLU dir is new, so the normalization goes into it, as for score345.
+    source "${INTERPLM_DIR}/scripts/pp06a_dictionaries.sh"
+    pp06a_check_dict
+    EVALSET="uniprotkb_modern_score345"
+    STORE_NAME="$(pp06a_store "${RERUN_DICT}")"
+    SAE_DIR="${RERUN_SAE_DIR:-$(pp06a_ckpt "${RERUN_DICT}")}"
+    OUT_DIR="${RERUN_OUT_DIR:-${SAE_DIR}}"
+    ;;
   *)
-    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345 or interplm650m." >&2
+    echo "Unknown RERUN_TARGET '${RERUN_TARGET}'. Use score345, diag67k, fulluniref67k, baselineuniref345, interplm650m or pp06a." >&2
     exit 2
     ;;
 esac
